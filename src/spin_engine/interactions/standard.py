@@ -1,5 +1,6 @@
 import numpy as np
 from .base import Interaction
+from typing import Optional
 
 
 class DecayingInteraction(Interaction):
@@ -77,7 +78,7 @@ class CurieWeissInteraction(Interaction):
 
 
 class GaussianInteraction(Interaction):
-    def __init__(self, mean: float = 0.0, std: float = 1.0, seed: int = None):
+    def __init__(self, mean: float = 0.0, std: float = 1.0, seed: Optional[int] = None):
         self.mean = mean
         self.std = std
         self.seed = seed

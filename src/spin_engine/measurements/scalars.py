@@ -19,7 +19,7 @@ class Magnetization(Measurement):
     """
     def compute(self, spin_state: Optional[tf.Tensor] = None) -> tf.Tensor:
         if spin_state is None:
-            spin_state = self.system.spin_state
+            spin_state = self.system.spin_state.value()
 
         # Match legacy: compute_magnetizations
         # tf.reduce_mean(tf.reshape(spin_state, (self.lattice_replicas, -1)), axis=1)
@@ -35,7 +35,7 @@ class MagneticSusceptibility(Measurement):
     """
     def compute(self, spin_state: Optional[tf.Tensor] = None) -> tf.Tensor:
         if spin_state is None:
-            spin_state = self.system.spin_state
+            spin_state = self.system.spin_state.value()
 
         # Match legacy: compute_magnetic_susceptibility
         # tf.math.reduce_variance(spin_state)

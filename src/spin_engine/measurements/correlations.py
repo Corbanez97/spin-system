@@ -9,9 +9,10 @@ class OverlapMatrix(Measurement):
     Q_ab = (1/N) * sum_i s_i^a * s_i^b
     Returns: Tensor of shape (replicas, replicas)
     """
+
     def compute(self, spin_state: Optional[tf.Tensor] = None) -> tf.Tensor:
         if spin_state is None:
-            spin_state = self.system.spin_state
+            spin_state = self.system.spin_state.value()
 
         spin_flat = tf.reshape(spin_state, (self.system.lattice_replicas, -1))
 

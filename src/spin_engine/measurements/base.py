@@ -6,7 +6,7 @@ if TYPE_CHECKING:
     from spin_engine.models.base import BaseSpinSystem
 
 
-class Measurement(tf.Module, ABC):
+class Measurement(ABC):
     """
     Abstract base class for all measurements.
 
@@ -14,8 +14,7 @@ class Measurement(tf.Module, ABC):
     given a Spin System and its state.
     """
 
-    def __init__(self, system: 'BaseSpinSystem', name: Optional[str] = None) -> None:
-        super().__init__(name=name)
+    def __init__(self, system: 'BaseSpinSystem') -> None:
         self.system = system
 
     @abstractmethod

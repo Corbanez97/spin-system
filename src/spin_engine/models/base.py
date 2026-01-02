@@ -34,7 +34,7 @@ class BaseSpinSystem(tf.Module, abc.ABC):
         Returns:
             tf.Tensor of shape (replicas, *shape, [components])
         """
-        raise NotImplementedError
+        pass
 
     @abc.abstractmethod
     def compute_energy(self, spin_state: Optional[tf.Tensor] = None) -> tf.Tensor:
@@ -45,7 +45,7 @@ class BaseSpinSystem(tf.Module, abc.ABC):
         Returns:
             tf.Tensor of shape (replicas,) containing energy values.
         """
-        raise NotImplementedError
+        pass
 
     def _initialize_or_validate_state(
         self, 
@@ -63,6 +63,7 @@ class BaseSpinSystem(tf.Module, abc.ABC):
             
         return tf.Variable(initial_value, trainable=True, dtype=tf.float32, name="spin_state")
 
+    # TODO: Review _validate_tensor_shape method
     def _validate_tensor_shape(
         self,
         tensor: Optional[tf.Tensor],
@@ -80,8 +81,8 @@ class BaseSpinSystem(tf.Module, abc.ABC):
                     return default()
                 elif default is not None:
                     return default
-                else:
-                    return None
+                # else:
+                #     return None
             else:
                 raise ValueError(f"{name} cannot be None")
 
@@ -93,13 +94,3 @@ class BaseSpinSystem(tf.Module, abc.ABC):
                 f"{name} must be shape {expected_shape}, got {tensor.shape}"
             )
         return tensor
-
-    def get_config(self):
-        """
-        Returns a dictionary or object suitable for plotting/inspection.
-        """
-        return {
-            "spin_state": self.spin_state.numpy(),
-            "energy": self.compute_energy().numpy(),
-            "lattice_length": self.lattice_length
-        }
