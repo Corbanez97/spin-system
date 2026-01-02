@@ -6,7 +6,7 @@ build-backend = "setuptools.build_meta"
 name = "spin_engine"
 version = "0.1.0"
 description = "A modular spin system simulation engine"
-authors = [{name = "Lucas", email = "lucas@example.com"}]
+authors = [{name = "Lucas Corbanez", email = "lucascorbanez@gmail.com"}]
 dependencies = [
     "tensorflow",
     "numpy",
