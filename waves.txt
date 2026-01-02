@@ -60,19 +60,22 @@ Below is the refined, agent-ready task description broken down into four distinc
 * **Task Description:**
 1. Create `src/dynamics/base.py` defining how a dynamic method should interact with a system (e.g., `step()` and `sweep()`).
 2. Implement `MetropolisDynamics(BaseDynamics)` in `dynamics/metropolis.py`.
-3. Move the "disturbance" logic (spin flips, rotations, link flips) into this class.
-4. Implement a `SweepManager` that handles the `while_loop` for MCMC, measurement granularity, and `TensorArray` tracking.
-
+3. Move the "disturbance" logic (spin flips and rotations) into this class. The `MetropolisDynamics` class should be agnostic of the model type but still figure out which method to use based on the model type. Ising models use spin flips, while spherical models use rotations.
+4. Implement a `SweepManager` that handles the `while_loop` for MCMC, measurement granularity, and `TensorArray` tracking. The tracking should be optional and only enabled when the `tracker` argument is provided. The tracker should be a class. If no tracker is added the loop should only update the model without tracking.
+5. There should be a testing suite that tests the `MetropolisDynamics` class on all models created in Wave 1. 
+6. There should also be a testing suite to test the `SweepManager` class on all models created in Wave 1.
+7. Implement a testing suite for the cross-checks between the old and new code. Run the simulation for a few steps and compare the results.
 
 * **Acceptance Criteria:**
-* The `MetropolisDynamics` class can perform a sweep on any of the three models created in Wave 1.
+* The `MetropolisDynamics` class can perform a sweep on any of the models created in Wave 1.
 * The dynamics class successfully updates the `tf.Variable` state inside the `SpinSystem` object.
-
+* The cross-checks between the old and new code are successful.
+* The `SweepManager` class successfully tracks the observables for a few steps with a given granularity.
+* The `SweepManager` class successfully runs a simulation for a few steps without tracking.
 
 * **Definition of Done:**
 * A script can run a 1000-step Metropolis sweep on an `IsingSystem` and return a dictionary of tracked observables.
 * All methods are decorated with `@tf.function` and run without retracing warnings.
-
 
 
 ---
