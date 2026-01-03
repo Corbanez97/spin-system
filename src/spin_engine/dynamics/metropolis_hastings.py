@@ -45,7 +45,7 @@ class MetropolisHastings(Dynamics):
         updated = tf.reshape(updated, self.system.spin_state.shape)
 
         energy_delta = tf.math.subtract(
-            self.current_energy, self.system.compute_energy(updated))
+            self.system.compute_energy(updated), self.current_energy)
 
         return updated, energy_delta
 
