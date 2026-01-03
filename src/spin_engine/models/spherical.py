@@ -1,7 +1,8 @@
 import tensorflow as tf
 import numpy as np
-from typing import Optional, Union, Callable
+from typing import Optional, Union, Callable, cast
 from .base import BaseSpinSystem
+
 
 class SphericalSystem(BaseSpinSystem):
     def __init__(
@@ -13,11 +14,12 @@ class SphericalSystem(BaseSpinSystem):
         initial_magnetization: float = 0.0,
         spherical_constraint: bool = False,
         lattice_dim: int = 2,
-        initial_spin_state: Optional[Union[tf.Tensor, Callable[[], tf.Tensor]]] = None,
+        initial_spin_state: Optional[Union[tf.Tensor,
+                                           Callable[[], tf.Tensor]]] = None,
     ):
         self.initial_magnetization = initial_magnetization
         self.spherical_constraint = spherical_constraint
-        
+
         super().__init__(
             lattice_dim=lattice_dim,
             lattice_length=lattice_length,
@@ -47,10 +49,11 @@ class SphericalSystem(BaseSpinSystem):
         spin_state = tf.random.normal(
             full_shape, mean=self.initial_magnetization, stddev=1.0
         )
-        
+
         if self.spherical_constraint:
-            spin_state = self._apply_spherical_constraint(spin_state)
-            
+            spin_state = cast(tf.Tensor, self._apply_spherical_constraint(
+                spin_state))  # Casting because I know this is a Tensor
+
         return spin_state
 
     @tf.function
@@ -72,25 +75,26 @@ class SphericalSystem(BaseSpinSystem):
 
         return tf.sqrt(self.number_spins) * normalized_spins
 
-    @tf.function
+    # @tf.function
     def compute_energy(self, spin_state: Optional[tf.Tensor] = None) -> tf.Tensor:
         if spin_state is None:
-            spin_state = self.spin_state
-
+            spin_state = self.spin_state.value()
         # Flatten spins: (replicas, N)
-        spin_state_flat = tf.reshape(spin_state, (self.lattice_replicas, -1))
+        spin_state_flat = tf.reshape(
+            self.spin_state, (self.lattice_replicas, -1))
 
         # Flatten interaction matrix: (N, N)
         interaction_matrix_flat = tf.reshape(
-            self.interaction_matrix, (int(self.number_spins), int(self.number_spins))
+            self.interaction_matrix, (self.number_spins, self.number_spins)
         )
 
         # Flatten field
         external_field_flat = tf.reshape(self.external_field, (1, -1))
 
         h_local = tf.matmul(spin_state_flat, interaction_matrix_flat)
-        
+
         pairwise = -0.5 * tf.reduce_sum(spin_state_flat * h_local, axis=1)
-        field_term = -tf.reduce_sum(spin_state_flat * external_field_flat, axis=1)
+        field_term = -tf.reduce_sum(spin_state_flat *
+                                    external_field_flat, axis=1)
 
         return pairwise + field_term

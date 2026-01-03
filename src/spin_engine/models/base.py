@@ -1,31 +1,36 @@
 import tensorflow as tf
+import numpy as np
 from typing import Optional, Union, Callable, Tuple, List
 import abc
+
 
 class BaseSpinSystem(tf.Module, abc.ABC):
     """
     Abstract base class for all spin systems.
     Encapsulates the lattice state, shape, and common utilities.
     """
+
     def __init__(
         self,
         lattice_dim: int,
         lattice_length: int,
         lattice_replicas: int,
-        initial_spin_state: Optional[Union[tf.Tensor, Callable[[], tf.Tensor]]] = None,
+        initial_spin_state: Optional[Union[tf.Tensor,
+                                           Callable[[], tf.Tensor]]] = None,
     ):
         super().__init__()
         self.lattice_dim = lattice_dim
         self.lattice_length = lattice_length
         self.lattice_replicas = lattice_replicas
-        
+
         # Derived properties
         self.shape = [lattice_length] * lattice_dim
         self.number_spins = tf.cast(lattice_length ** lattice_dim, tf.float32)
 
         # Initialize or validate spin state
-        self.spin_state = self._initialize_or_validate_state(initial_spin_state)
-    
+        self.spin_state = self._initialize_or_validate_state(
+            initial_spin_state)
+
     @abc.abstractmethod
     def initialize_state(self) -> tf.Tensor:
         """
@@ -37,6 +42,7 @@ class BaseSpinSystem(tf.Module, abc.ABC):
         pass
 
     @abc.abstractmethod
+    # @tf.function
     def compute_energy(self, spin_state: Optional[tf.Tensor] = None) -> tf.Tensor:
         """
         Computes the energy of the system for each replica.
@@ -48,7 +54,7 @@ class BaseSpinSystem(tf.Module, abc.ABC):
         pass
 
     def _initialize_or_validate_state(
-        self, 
+        self,
         initial_state: Optional[Union[tf.Tensor, Callable[[], tf.Tensor]]]
     ) -> tf.Variable:
         """
@@ -59,14 +65,15 @@ class BaseSpinSystem(tf.Module, abc.ABC):
         elif callable(initial_state):
             initial_value = initial_state()
         else:
-            initial_value = tf.convert_to_tensor(initial_state, dtype=tf.float32)
-            
+            initial_value = tf.convert_to_tensor(
+                initial_state, dtype=tf.float32)
+
         return tf.Variable(initial_value, trainable=True, dtype=tf.float32, name="spin_state")
 
     # TODO: Review _validate_tensor_shape method
     def _validate_tensor_shape(
         self,
-        tensor: Optional[tf.Tensor],
+        tensor: Optional[Union[tf.Tensor, np.ndarray]],
         expected_shape: tuple[int, ...],
         name: str,
         allow_none: bool = False,

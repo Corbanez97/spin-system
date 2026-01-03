@@ -8,6 +8,8 @@ class Energy(Measurement):
     Computes the total energy of the system.
     Returns a tensor of shape (replicas,).
     """
+    # @tf.function
+
     def compute(self, spin_state: Optional[tf.Tensor] = None) -> tf.Tensor:
         return self.system.compute_energy(spin_state)
 
@@ -17,6 +19,7 @@ class Magnetization(Measurement):
     Computes the average magnetization per site for each replica.
     Returns a tensor of shape (replicas,).
     """
+
     def compute(self, spin_state: Optional[tf.Tensor] = None) -> tf.Tensor:
         if spin_state is None:
             spin_state = self.system.spin_state.value()
@@ -33,6 +36,7 @@ class MagneticSusceptibility(Measurement):
     Computes the variance of the spin state (Legacy implementation).
     Returns a scalar.
     """
+
     def compute(self, spin_state: Optional[tf.Tensor] = None) -> tf.Tensor:
         if spin_state is None:
             spin_state = self.system.spin_state.value()
