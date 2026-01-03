@@ -5,11 +5,6 @@ from spin_engine.models.spherical import SphericalSystem
 from spin_engine.models.ising import IsingSystem
 import tensorflow as tf
 import pytest
-import sys
-import os
-
-sys.path.append(os.path.abspath(
-    os.path.join(os.path.dirname(__file__), '../..')))
 
 from legacy_core import SpinSystem as LegacySpinSystem
 

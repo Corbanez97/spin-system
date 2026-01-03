@@ -1,3 +1,5 @@
+# type: ignore
+
 import tensorflow as tf
 import numpy as np
 from typing import Union, Optional, Callable, Tuple, Literal, Dict
