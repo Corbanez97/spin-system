@@ -49,6 +49,15 @@ class MagneticSusceptibility(Measurement):
         if spin_state is None:
             spin_state = system.spin_state.value()
 
-        # Match legacy: compute_magnetic_susceptibility
-        # tf.math.reduce_variance(spin_state)
-        return tf.math.reduce_variance(spin_state)
+        # Compute magnetization for each replica
+        if system is not None:
+            replicas = system.lattice_replicas
+        else:
+            replicas = tf.shape(spin_state)[0]
+
+        flat_state = tf.reshape(spin_state, (replicas, -1))
+        # Magnetization per replica
+        magnetizations = tf.reduce_mean(flat_state, axis=1)
+
+        # Susceptibility: Variance of the magnetizations across replicas
+        return tf.math.reduce_variance(magnetizations)
