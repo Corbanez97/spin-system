@@ -58,9 +58,9 @@ class IsingSystem(BaseSpinSystem):
         return spin_state
 
     # @tf.function
-    def compute_energy(self, spin_state: Optional[tf.Tensor] = None) -> tf.Tensor:
+    def compute_energy(self, spin_state: Optional[tf.Variable | tf.Tensor] = None) -> tf.Tensor:
         if spin_state is None:
-            spin_state = self.spin_state.value()
+            spin_state = self.spin_state
 
         # Flatten spins: (replicas, N)
         spin_state_flat = tf.reshape(spin_state, (self.lattice_replicas, -1))
