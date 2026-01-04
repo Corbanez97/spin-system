@@ -22,7 +22,7 @@ class Tracker(tf.Module):
         size = num_measurements + 1
         arrays = {}
         for measurement in self.measurements:
-            name = measurement.__class__.__name__
+            name = getattr(measurement, 'name', measurement.__class__.__name__)
             # Use dynamic size if needed, but fixed size is better for performance if known.
             # clear_after_read=False is needed if we stack at end.
             arrays[name] = tf.TensorArray(
@@ -48,7 +48,8 @@ class Tracker(tf.Module):
 
             new_arrays = {}
             for measurement in self.measurements:
-                name = measurement.__class__.__name__
+                name = getattr(measurement, 'name',
+                               measurement.__class__.__name__)
                 # Pass system explicitly as requested for loose coupling
                 val = measurement.compute(system.spin_state, system=system)
                 new_arrays[name] = arrays[name].write(index, val)
