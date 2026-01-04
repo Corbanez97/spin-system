@@ -14,22 +14,23 @@ class Measurement(ABC):
     given a Spin System and its state.
     """
 
-    def __init__(self, system: 'BaseSpinSystem') -> None:
+    def __init__(self, system: Optional['BaseSpinSystem'] = None) -> None:
         self.system = system
 
     @abstractmethod
-    def compute(self, spin_state: Optional[tf.Tensor] = None) -> Any:
+    def compute(self, spin_state: Optional[tf.Tensor] = None, system: Optional['BaseSpinSystem'] = None) -> Any:
         """
         Compute the measurement.
 
         Args:
             spin_state: Optional tensor representing the state to measure.
                         If None, uses self.system.spin_state.
+            system: Optional BaseSpinSystem instance. If None, uses self.system.
 
         Returns:
             The computed measurement value.
         """
         pass
 
-    def __call__(self, spin_state: Optional[tf.Tensor] = None) -> Any:
-        return self.compute(spin_state)
+    def __call__(self, spin_state: Optional[tf.Tensor] = None, system: Optional['BaseSpinSystem'] = None) -> Any:
+        return self.compute(spin_state, system)

@@ -1,6 +1,6 @@
 import tensorflow as tf
 import numpy as np
-from typing import Optional, Union, Callable, Tuple, List
+from typing import Optional, Union, Callable, cast
 import abc
 
 
@@ -52,6 +52,18 @@ class BaseSpinSystem(tf.Module, abc.ABC):
             tf.Tensor of shape (replicas,) containing energy values.
         """
         pass
+
+    def update_state(self, updated_spin_state: tf.Tensor) -> None:
+        """
+        Take a new spin configuration and update the current state.
+        Args:
+           updated_spin_state: New spin configuration
+        Returns:
+          None
+        """
+        self._validate_tensor_shape(updated_spin_state, cast(
+            tuple, self.spin_state.shape), "Updated Spin State")
+        self.spin_state.assign(updated_spin_state)
 
     def _initialize_or_validate_state(
         self,
