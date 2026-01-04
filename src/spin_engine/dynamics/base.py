@@ -23,7 +23,7 @@ class Dynamics(abc.ABC):
     def step(
         self,
         beta: float,
-        numb_disturbances: tf.Tensor,
+        num_disturbances: tf.Tensor,
         theta_max: Optional[tf.Tensor] = None
     ) -> 'BaseSpinSystem':
         """
@@ -37,7 +37,7 @@ class Dynamics(abc.ABC):
         self,
         tracker: 'Tracker',
         beta: float,
-        num_disturb: int = 1,
+        num_disturbances: tf.Tensor,
         theta_max: Optional[tf.Tensor] = None,
         sweep_length: Optional[int] = None,
     ) -> 'BaseSpinSystem':

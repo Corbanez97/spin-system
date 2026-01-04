@@ -62,11 +62,11 @@ class MetropolisHastings(Dynamics):
     def step(
         self,
         beta: float,
-        numb_disturbances: tf.Tensor,
+        num_disturbances: tf.Tensor,
         theta_max: Optional[tf.Tensor] = None
     ) -> 'BaseSpinSystem':
         updated, updated_energy = self._disturb_state(
-            num_disturbances=numb_disturbances, theta_max=theta_max)
+            num_disturbances=num_disturbances, theta_max=theta_max)
 
         energy_delta = tf.math.subtract(updated_energy, self.current_energy)
 
@@ -100,7 +100,7 @@ class MetropolisHastings(Dynamics):
         self,
         tracker: 'Tracker',
         beta: float,
-        num_disturb: int = 1,
+        num_disturbance: int = 1,
         theta_max: Optional[tf.Tensor] = None,
         sweep_length: Optional[int] = None,
     ) -> 'BaseSpinSystem':
