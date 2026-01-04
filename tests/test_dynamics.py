@@ -4,7 +4,8 @@ from typing import cast
 
 from spin_engine.interactions import PeriodicNearestNeighborInteraction
 from spin_engine.models import IsingSystem
-from spin_engine.dynamics import MetropolisHastings
+from spin_engine.dynamics import MetropolisHastings, Tracker
+from spin_engine.measurements.base import Measurement
 
 
 class TestDynamics:
@@ -90,20 +91,124 @@ class TestDynamics:
         initial_energy = simulation.current_energy
         num_flips = cast(tf.Tensor, tf.constant(1))
 
-        proposed_spin_state, energy_delta = simulation.flip_spins(
+        proposed_spin_state, new_energy = simulation.flip_spins(
             num_flips=num_flips)
 
         # Calculate new energy manually from the proposed state
-        # We can't trust the incremental update here, we must recompute from scratch
-        # IsingSystem doesn't have compute_energy generic method attached to it for arbitrary state
-        # based on previous file reads, it seemed to, checking MetropolisHastings:
-        # self.current_energy = system.compute_energy()
-        # and: energy_delta = ... self.system.compute_energy(updated)
-        # So IsingSystem must have compute_energy(spin_state=...)
-
         new_energy_recomputed = ising_system.compute_energy(
             spin_state=proposed_spin_state)
 
-        actual_delta = new_energy_recomputed - initial_energy
+        tf.debugging.assert_near(new_energy, new_energy_recomputed, atol=1e-5)
 
-        tf.debugging.assert_near(energy_delta, actual_delta, atol=1e-5)
+    def test_sweep_execution(self, setup_system):
+        simulation = setup_system['simulation']
+
+        # Mock tracker
+        class MockMeasurement(Measurement):
+            def __init__(self, name):
+                super().__init__()
+                self.name = name
+
+            def compute(self, spin_state=None, system=None):
+                return tf.reduce_mean(tf.cast(system.spin_state, tf.float32))
+
+        tracker = Tracker([MockMeasurement("Magnetization")])
+
+        # Run small sweep
+        simulation.sweep(tracker, beta=0.1,
+                         num_disturbances=1, sweep_length=10)
+
+        # Check that history is populated
+        assert "Magnetization" in tracker.history
+        # 0 to 10 inclusive
+        assert tracker.history["Magnetization"].shape[0] == 11 or tf.shape(
+            tracker.history["Magnetization"])[0] == 11
+
+    def test_sweep_tracking_integration(self, setup_system):
+        simulation = setup_system['simulation']
+        granularity = 2
+
+        class MockMeasurement(Measurement):
+            def __init__(self, name):
+                super().__init__()
+                self.name = name
+
+            def compute(self, spin_state=None, system=None):
+                return tf.constant(1.0)  # Dummy value
+
+        tracker = Tracker([MockMeasurement("Dummy")], granularity=granularity)
+
+        sweep_length = 10
+        simulation.sweep(tracker, beta=0.1, num_disturbances=1,
+                         sweep_length=sweep_length)
+
+        expected_steps = (sweep_length // granularity) + 1
+        assert tracker.history["Dummy"].shape[0] == expected_steps or tf.shape(
+            tracker.history["Dummy"])[0] == expected_steps
+
+    def test_high_temperature_convergence(self):
+        # High Temp -> Low Beta -> Magnetization should be random (near 0 avg)
+        lattice_dim = 2
+        lattice_length = 8
+        lattice_replicas = 5
+
+        interaction_matrix = PeriodicNearestNeighborInteraction().generate(
+            lattice_dim, lattice_length)
+
+        ising_system = IsingSystem(
+            lattice_dim=lattice_dim,
+            lattice_length=lattice_length,
+            lattice_replicas=lattice_replicas,
+            interaction_matrix=interaction_matrix
+        )
+        simulation = MetropolisHastings(ising_system)
+
+        class Magnetization(Measurement):
+            def compute(self, spin_state=None, system=None):
+                # Mean per replica
+                return tf.reduce_mean(tf.cast(system.spin_state, tf.float32), axis=[1, 2])
+
+        tracker = Tracker([Magnetization()])
+
+        # Beta = 0.0 (Infinite Temperature)
+        simulation.sweep(tracker, beta=0.0,
+                         num_disturbances=10, sweep_length=200)
+
+        final_mag = tracker.history["Magnetization"][-1]
+
+        # Should be close to 0
+        mean_abs_mag = tf.reduce_mean(tf.abs(final_mag))
+        assert mean_abs_mag < 0.2, f"Magnetization at infinite temp should be low, got {mean_abs_mag}"
+
+    def test_low_temperature_convergence(self):
+        # Low Temp -> High Beta -> Magnetization should order (+1 or -1)
+        lattice_dim = 2
+        lattice_length = 4  # Keep small for fast ordering
+        lattice_replicas = 20
+
+        interaction_matrix = PeriodicNearestNeighborInteraction().generate(
+            lattice_dim, lattice_length)
+
+        ising_system = IsingSystem(
+            lattice_dim=lattice_dim,
+            lattice_length=lattice_length,
+            lattice_replicas=lattice_replicas,
+            interaction_matrix=interaction_matrix
+        )
+        simulation = MetropolisHastings(ising_system)
+
+        class Magnetization(Measurement):
+            def compute(self, spin_state=None, system=None):
+                return tf.reduce_mean(tf.cast(system.spin_state, tf.float32), axis=[1, 2])
+
+        tracker = Tracker([Magnetization()])
+
+        # High Beta
+        simulation.sweep(tracker, beta=1.0,
+                         num_disturbances=1, sweep_length=5000)
+
+        final_mag = tracker.history["Magnetization"][-1]
+
+        # Should be close to 1 or -1
+        mean_abs_mag = tf.reduce_mean(tf.abs(final_mag))
+        assert mean_abs_mag > 0.8, f"Magnetization at low temp should be ordered, got {mean_abs_mag}"

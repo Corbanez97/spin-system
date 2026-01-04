@@ -79,7 +79,8 @@ class TestDynamicsCrossCheck:
             return dynamics.flip_spins(num_flips)  # type: ignore
 
         tf.random.set_seed(seed)
-        new_updated_spins, new_energy_delta = run_new_flip()  # type: ignore
+        new_updated_spins, new_total_energy = run_new_flip()  # type: ignore
+        new_energy_delta = new_total_energy - dynamics.current_energy
 
         # Legacy returns flat spins (replicas, N), New returns (replicas, L, L)
         legacy_updated_spins = tf.reshape(

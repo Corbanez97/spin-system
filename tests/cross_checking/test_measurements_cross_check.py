@@ -82,9 +82,11 @@ class TestMeasurementsCrossCheck:
         tf.debugging.assert_near(legacy_mag, new_mag, atol=1e-5)
 
         # 3. Magnetic Susceptibility
-        legacy_susp = legacy.compute_magnetic_susceptibility()
+        legacy_mag_per_replica = tf.reduce_mean(
+            tf.reshape(legacy.spin_state, (replicas, -1)), axis=1)
+        expected_susp = tf.math.reduce_variance(legacy_mag_per_replica)
         new_susp = MagneticSusceptibility(new_system).compute()
-        tf.debugging.assert_near(legacy_susp, new_susp, atol=1e-5)
+        tf.debugging.assert_near(expected_susp, new_susp, atol=1e-5)
 
         # 4. Overlap Matrix
         legacy_overlap = legacy.compute_overlap_matrix()
@@ -127,6 +129,8 @@ class TestMeasurementsCrossCheck:
         tf.debugging.assert_near(legacy_mag, new_mag, atol=1e-5)
 
         # 3. Magnetic Susceptibility
-        legacy_susp = legacy.compute_magnetic_susceptibility()
+        legacy_mag_per_replica = tf.reduce_mean(
+            tf.reshape(legacy.spin_state, (replicas, -1)), axis=1)
+        expected_susp = tf.math.reduce_variance(legacy_mag_per_replica)
         new_susp = MagneticSusceptibility(new_system).compute()
-        tf.debugging.assert_near(legacy_susp, new_susp, atol=1e-5)
+        tf.debugging.assert_near(expected_susp, new_susp, atol=1e-5)
