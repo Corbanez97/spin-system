@@ -19,11 +19,11 @@ class Dynamics(abc.ABC):
         self.system = system
 
     @abc.abstractmethod
-    @tf.function
+    # @tf.function
     def step(
         self,
         beta: float,
-        numb_disturbances: int = 1,
+        numb_disturbances: tf.Tensor,
         theta_max: Optional[tf.Tensor] = None
     ) -> 'BaseSpinSystem':
         """

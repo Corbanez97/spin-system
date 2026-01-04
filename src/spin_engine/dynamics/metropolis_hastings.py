@@ -44,29 +44,55 @@ class MetropolisHastings(Dynamics):
             spin_flat, scatter_indices, updates)
         updated = tf.reshape(updated, self.system.spin_state.shape)
 
-        energy_delta = tf.math.subtract(
-            self.system.compute_energy(updated), self.current_energy)
+        updated_energy = self.system.compute_energy(updated)
 
-        return updated, energy_delta
+        return updated, updated_energy
 
-    def _disturb_state(self, num_disturb: tf.Tensor, theta_max: Optional[tf.Tensor]) -> Tuple[tf.Tensor, tf.Tensor]:
+    def _disturb_state(self, num_disturbances: tf.Tensor, theta_max: Optional[tf.Tensor]) -> Tuple[tf.Variable | tf.Tensor, tf.Tensor]:
         if theta_max is None:
-            updated, energy_delta = self.flip_spins(num_disturb)
+            updated, updated_energy = self.flip_spins(num_disturbances)
         else:
             if isinstance(self.system, IsingSystem):
                 raise TypeError(
                     "Can't perform rotations on Ising Spins. Remove theta_max or use Spherical System")
-            return self.system.spin_state.value(), self.current_energy
-        return updated, energy_delta
+            return self.system.spin_state, self.current_energy
+        return updated, updated_energy
 
-    @tf.function
+    # @tf.function
     def step(
         self,
         beta: float,
         numb_disturbances: tf.Tensor,
         theta_max: Optional[tf.Tensor] = None
     ) -> 'BaseSpinSystem':
+        updated, updated_energy = self._disturb_state(
+            num_disturbances=numb_disturbances, theta_max=theta_max)
 
+        energy_delta = tf.math.subtract(updated_energy, self.current_energy)
+
+        prob_accept = tf.exp(-tf.multiply(beta, energy_delta))
+
+        random_vals = tf.random.uniform(
+            shape=(self.system.lattice_replicas,), dtype=tf.float32)
+
+        accept = tf.logical_or(
+            tf.less(energy_delta, 0.0),
+            random_vals < prob_accept
+        )
+
+        new_spin_state = tf.where(
+            tf.reshape(accept, (-1,) + (1,) * self.system.lattice_dim),
+            updated,
+            self.system.spin_state
+        )
+        self.system.update_state(new_spin_state)
+
+        self.current_energy = tf.where(
+            accept,
+            updated_energy,
+            self.current_energy
+        )
+        tf.print(self.current_energy)
         return self.system
 
     @tf.function
