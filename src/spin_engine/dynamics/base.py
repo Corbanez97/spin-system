@@ -19,20 +19,18 @@ class Dynamics(abc.ABC):
         self.system = system
 
     @abc.abstractmethod
-    # @tf.function
     def step(
         self,
         beta: float,
         num_disturbances: tf.Tensor,
         theta_max: Optional[tf.Tensor] = None
-    ) -> 'BaseSpinSystem':
+    ) -> None:
         """
         How a step is taken inside our simulation. This method should be called in the main loop of the simulation.
         """
         pass
 
     @abc.abstractmethod
-    @tf.function
     def sweep(
         self,
         tracker: 'Tracker',
@@ -40,7 +38,7 @@ class Dynamics(abc.ABC):
         num_disturbances: tf.Tensor,
         theta_max: Optional[tf.Tensor] = None,
         sweep_length: Optional[int] = None,
-    ) -> 'BaseSpinSystem':
+    ) -> None:
         """
         The orchestrator of multiple steps of the simulation.
         """

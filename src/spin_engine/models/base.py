@@ -63,7 +63,7 @@ class BaseSpinSystem(tf.Module, abc.ABC):
         """
         self._validate_tensor_shape(updated_spin_state, cast(
             tuple, self.spin_state.shape), "Updated Spin State")
-        self.spin_state = updated_spin_state
+        self.spin_state.assign(updated_spin_state)
 
     def _initialize_or_validate_state(
         self,

@@ -10,8 +10,10 @@ class Energy(Measurement):
     """
     # @tf.function
 
-    def compute(self, spin_state: Optional[tf.Tensor] = None) -> tf.Tensor:
-        return self.system.compute_energy(spin_state)
+    def compute(self, spin_state: Optional[tf.Tensor] = None, system: Optional['BaseSpinSystem'] = None) -> tf.Tensor:
+        if system is None:
+            system = self.system
+        return system.compute_energy(spin_state)
 
 
 class Magnetization(Measurement):
@@ -20,14 +22,17 @@ class Magnetization(Measurement):
     Returns a tensor of shape (replicas,).
     """
 
-    def compute(self, spin_state: Optional[tf.Tensor] = None) -> tf.Tensor:
+    def compute(self, spin_state: Optional[tf.Tensor] = None, system: Optional['BaseSpinSystem'] = None) -> tf.Tensor:
+        if system is None:
+            system = self.system
+
         if spin_state is None:
-            spin_state = self.system.spin_state.value()
+            spin_state = system.spin_state.value()
 
         # Match legacy: compute_magnetizations
         # tf.reduce_mean(tf.reshape(spin_state, (self.lattice_replicas, -1)), axis=1)
 
-        flat_state = tf.reshape(spin_state, (self.system.lattice_replicas, -1))
+        flat_state = tf.reshape(spin_state, (system.lattice_replicas, -1))
         return tf.reduce_mean(flat_state, axis=1)
 
 
@@ -37,9 +42,12 @@ class MagneticSusceptibility(Measurement):
     Returns a scalar.
     """
 
-    def compute(self, spin_state: Optional[tf.Tensor] = None) -> tf.Tensor:
+    def compute(self, spin_state: Optional[tf.Tensor] = None, system: Optional['BaseSpinSystem'] = None) -> tf.Tensor:
+        if system is None:
+            system = self.system
+
         if spin_state is None:
-            spin_state = self.system.spin_state.value()
+            spin_state = system.spin_state.value()
 
         # Match legacy: compute_magnetic_susceptibility
         # tf.math.reduce_variance(spin_state)

@@ -16,7 +16,8 @@ class MetropolisHastings(Dynamics):
 
     def __init__(self, system: 'BaseSpinSystem') -> None:
         super().__init__(system)
-        self.current_energy = system.compute_energy()
+        self.current_energy = tf.Variable(
+            system.compute_energy(), trainable=False, name="current_energy")
 
     def flip_spins(self, num_flips: tf.Tensor) -> Tuple[tf.Tensor, tf.Tensor]:
         """
@@ -64,7 +65,7 @@ class MetropolisHastings(Dynamics):
         beta: float,
         num_disturbances: tf.Tensor,
         theta_max: Optional[tf.Tensor] = None
-    ) -> 'BaseSpinSystem':
+    ) -> None:
         updated, updated_energy = self._disturb_state(
             num_disturbances=num_disturbances, theta_max=theta_max)
 
@@ -87,24 +88,62 @@ class MetropolisHastings(Dynamics):
         )
         self.system.update_state(new_spin_state)
 
-        self.current_energy = tf.where(
+        new_energy = tf.where(
             accept,
             updated_energy,
             self.current_energy
         )
-        tf.print(self.current_energy)
-        return self.system
+        self.current_energy.assign(new_energy)
+        return None
 
     @tf.function
     def sweep(
         self,
         tracker: 'Tracker',
         beta: float,
-        num_disturbance: int = 1,
+        num_disturbances: int = 1,
         theta_max: Optional[tf.Tensor] = None,
         sweep_length: Optional[int] = None,
-    ) -> 'BaseSpinSystem':
+    ) -> None:
         """
         The orchestrator of multiple steps of the simulation.
         """
-        return self.system
+        if sweep_length is None:
+            spin_float = tf.cast(self.system.number_spins, tf.float32)
+            granularity_float = tf.cast(tracker.granularity, tf.float32)
+            sweep_length = tf.cast(spin_float * granularity_float, tf.int32)
+        else:
+            sweep_length = tf.cast(sweep_length, tf.int32)
+
+        # Initialize tracking (returns dict of TensorArrays)
+        tracking_arrays = tracker.init_run(sweep_length)
+
+        # Track initial state (step 0)
+        # Note: step is 0-indexed.
+        tracking_arrays = tracker.track(tf.constant(
+            0, dtype=tf.int32), self.system, tracking_arrays)
+
+        def body(i, tracking_arrays):
+            # Perform step
+            _ = self.step(beta, num_disturbances, theta_max)
+
+            # Track current step (i + 1)
+            # if i=0 (first iteration), we just finished step 1.
+            current_step = i + 1
+            new_arrays = tracker.track(
+                current_step, self.system, tracking_arrays)
+
+            return i + 1, new_arrays
+
+        # Loop
+        i0 = tf.constant(0, dtype=tf.int32)
+        _, final_arrays = tf.while_loop(
+            lambda i, _: i < sweep_length,
+            body,
+            loop_vars=[i0, tracking_arrays]
+        )
+
+        # Finalize tracking (stores to tracker.history)
+        tracker.finalize(final_arrays)
+
+        return None
