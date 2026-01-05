@@ -1,5 +1,5 @@
 import tensorflow as tf
-from typing import List, Dict, Optional, TYPE_CHECKING
+from typing import List, Dict, cast, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from spin_engine.measurements.base import Measurement
@@ -17,9 +17,10 @@ class Tracker(tf.Module):
         """
         Initialize the tracking arrays for the run.
         """
-        num_measurements = tf.cast(sweep_length // self.granularity, tf.int32)
+        num_measurements = tf.cast(
+            tf.divide(sweep_length, self.granularity), tf.int32)
         # Size = num_measurements + 1 (for initial state or inclusive boundary if handled)
-        size = num_measurements + 1
+        size = tf.add(num_measurements, 1)
         arrays = {}
         for measurement in self.measurements:
             name = getattr(measurement, 'name', measurement.__class__.__name__)
@@ -44,13 +45,12 @@ class Tracker(tf.Module):
         step_int = tf.cast(step, tf.int32)
 
         def write_measurements(arrays):
-            index = step_int // self.granularity
+            index = tf.math.floordiv(step_int, self.granularity)
 
             new_arrays = {}
             for measurement in self.measurements:
                 name = getattr(measurement, 'name',
                                measurement.__class__.__name__)
-                # Pass system explicitly as requested for loose coupling
                 val = measurement.compute(system.spin_state, system=system)
                 new_arrays[name] = arrays[name].write(index, val)
             return new_arrays
@@ -58,10 +58,13 @@ class Tracker(tf.Module):
         def no_op(arrays):
             return arrays
 
-        condition = tf.equal(step_int % self.granularity, 0)
+        condition = tf.equal(tf.math.floormod(step_int, self.granularity), 0)
 
-        # Use tf.cond for graph compatibility
-        return tf.cond(condition, lambda: write_measurements(tracking_arrays), lambda: no_op(tracking_arrays))
+        return cast(
+            Dict[str, tf.TensorArray],
+            tf.cond(condition, lambda: write_measurements(
+                tracking_arrays), lambda: no_op(tracking_arrays))
+        )
 
     def finalize(self, tracking_arrays: Dict[str, tf.TensorArray]):
         """
