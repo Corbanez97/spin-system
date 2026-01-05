@@ -1,3 +1,5 @@
+# type: ignore
+
 import tensorflow as tf
 from typing import Optional
 from .base import Measurement
@@ -16,7 +18,7 @@ class Plaquette(Measurement):
             raise TypeError(
                 "Plaquette measurement only valid for Z2GaugeSystem")
 
-    def compute(self, spin_state: Optional[tf.Tensor] = None) -> tf.Tensor:
+    def compute(self, spin_state: Optional[tf.Variable | tf.Tensor] = None) -> tf.Tensor:
         raise NotImplementedError("Z2GaugeSystem is not implemented yet.")
 
 
@@ -33,5 +35,5 @@ class WilsonLoop(Measurement):
                 "WilsonLoop measurement only valid for Z2GaugeSystem")
         self.loop_size = loop_size
 
-    def compute(self, spin_state: Optional[tf.Tensor] = None) -> tf.Tensor:
+    def compute(self, spin_state: Optional[tf.Variable | tf.Tensor] = None) -> tf.Tensor:
         raise NotImplementedError("Z2GaugeSystem is not implemented yet.")

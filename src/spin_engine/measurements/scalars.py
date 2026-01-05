@@ -1,63 +1,64 @@
 import tensorflow as tf
-from typing import Optional, Any
+from typing import Optional, TYPE_CHECKING
 from .base import Measurement
+
+if TYPE_CHECKING:
+    from spin_engine.models.base import BaseSpinSystem
 
 
 class Energy(Measurement):
     """
     Computes the total energy of the system.
+    Requires a system instance to access the Hamiltonian logic.
     Returns a tensor of shape (replicas,).
     """
-    # @tf.function
 
-    def compute(self, spin_state: Optional[tf.Tensor] = None, system: Optional['BaseSpinSystem'] = None) -> tf.Tensor:
-        if system is None:
-            system = self.system
-        return system.compute_energy(spin_state)
+    def compute(self, spin_state: Optional[tf.Variable | tf.Tensor] = None,
+                system: Optional['BaseSpinSystem'] = None) -> tf.Tensor:
+
+        state, sys = self._resolve(spin_state, system)
+
+        if sys is None:
+            raise ValueError(
+                "Energy computation requires a system (Hamiltonian logic).")
+
+        return sys.compute_energy(state)
 
 
 class Magnetization(Measurement):
     """
     Computes the average magnetization per site for each replica.
+    Can function with just a spin_state (inferring replicas from shape).
     Returns a tensor of shape (replicas,).
     """
 
-    def compute(self, spin_state: Optional[tf.Tensor] = None, system: Optional['BaseSpinSystem'] = None) -> tf.Tensor:
-        if system is None:
-            system = self.system
+    def compute(self, spin_state: Optional[tf.Variable | tf.Tensor] = None,
+                system: Optional['BaseSpinSystem'] = None) -> tf.Tensor:
 
-        if spin_state is None:
-            spin_state = system.spin_state.value()
+        state, sys = self._resolve(spin_state, system)
 
-        # Match legacy: compute_magnetizations
-        # tf.reduce_mean(tf.reshape(spin_state, (self.lattice_replicas, -1)), axis=1)
+        # Resolve replicas: System metadata > Tensor shape
+        replicas = sys.lattice_replicas if sys else state.shape[0]
 
-        flat_state = tf.reshape(spin_state, (system.lattice_replicas, -1))
+        flat_state = tf.reshape(state, (replicas, -1))
         return tf.reduce_mean(flat_state, axis=1)
 
 
 class MagneticSusceptibility(Measurement):
     """
-    Computes the variance of the spin state (Legacy implementation).
+    Computes the variance of the spin state magnetizations across replicas.
+    Can function with just a spin_state.
     Returns a scalar.
     """
 
-    def compute(self, spin_state: Optional[tf.Tensor] = None, system: Optional['BaseSpinSystem'] = None) -> tf.Tensor:
-        if system is None:
-            system = self.system
+    def compute(self, spin_state: Optional[tf.Variable | tf.Tensor] = None,
+                system: Optional['BaseSpinSystem'] = None) -> tf.Tensor:
 
-        if spin_state is None:
-            spin_state = system.spin_state.value()
+        state, sys = self._resolve(spin_state, system)
 
-        # Compute magnetization for each replica
-        if system is not None:
-            replicas = system.lattice_replicas
-        else:
-            replicas = tf.shape(spin_state)[0]
+        replicas = sys.lattice_replicas if sys else state.shape[0]
 
-        flat_state = tf.reshape(spin_state, (replicas, -1))
-        # Magnetization per replica
-        magnetizations = tf.reduce_mean(flat_state, axis=1)
+        flat_state = tf.reshape(state, (replicas, -1))
+        m_per_replica = tf.reduce_mean(flat_state, axis=1)
 
-        # Susceptibility: Variance of the magnetizations across replicas
-        return tf.math.reduce_variance(magnetizations)
+        return tf.math.reduce_variance(m_per_replica)
