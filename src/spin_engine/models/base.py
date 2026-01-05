@@ -43,7 +43,7 @@ class BaseSpinSystem(tf.Module, abc.ABC):
 
     @abc.abstractmethod
     # @tf.function
-    def compute_energy(self, spin_state: Optional[tf.Tensor] = None) -> tf.Tensor:
+    def compute_energy(self, spin_state: Optional[tf.Variable | tf.Tensor] = None) -> tf.Tensor:
         """
         Computes the energy of the system for each replica.
         Args:
