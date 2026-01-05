@@ -46,10 +46,10 @@ def run_simulation():
 
     granularity = 100
     num_flips = cast(tf.Tensor, tf.constant(1))
-    sweep_length = 100000
+    sweep_length = 25000
     equilibration_steps = sweep_length * granularity // 2
 
-    betas = generate_betas(20)
+    betas = generate_betas(12)
     results = {}
     susceptibility_results = []
 
@@ -124,7 +124,7 @@ def run_simulation():
             ax.set_ylabel('Magnetization')
 
     # Hide unused subplots
-    for j in range(num_plots + 1, len(axes_flat)):
+    for j in range(num_plots, len(axes_flat)):
         axes_flat[j].axis('off')
 
     plt.tight_layout()
@@ -142,7 +142,8 @@ def run_simulation():
 
     plt.title('Magnetic Susceptibility vs Beta')
     plt.xlabel('Inverse Temperature (Beta)')
-    plt.ylabel('Susceptibility ($\chi$)')
+    # ignore typing for LaTeX inside ylabel
+    plt.ylabel('Susceptibility ($\chi$)')  # type: ignore
     plt.legend()
     plt.grid(True, alpha=0.3)
 
