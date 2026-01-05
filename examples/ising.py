@@ -85,7 +85,8 @@ def run_simulation():
         results[beta] = beta_results
 
         # Calculate Magnetic Susceptibility using the final state
-        susceptibility = MagneticSusceptibility().compute(ising_system.spin_state).numpy()
+        susceptibility = MagneticSusceptibility(
+            ising_system).compute().numpy()  # type: ignore
         print(f"Susceptibility for beta={beta:.4f}: {susceptibility}")
         susceptibility_results.append((beta, susceptibility, 0.0))
 
@@ -123,7 +124,7 @@ def run_simulation():
             ax.set_ylabel('Magnetization')
 
     # Hide unused subplots
-    for j in range(i + 1, len(axes_flat)):
+    for j in range(num_plots + 1, len(axes_flat)):
         axes_flat[j].axis('off')
 
     plt.tight_layout()

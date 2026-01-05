@@ -1,5 +1,5 @@
 import tensorflow as tf
-from typing import List, Dict, cast, TYPE_CHECKING
+from typing import Sequence, Dict, cast, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from spin_engine.measurements.base import Measurement
@@ -7,7 +7,7 @@ if TYPE_CHECKING:
 
 
 class Tracker(tf.Module):
-    def __init__(self, measurements: List['Measurement'], granularity: int = 1):
+    def __init__(self, measurements: Sequence['Measurement'], granularity: int = 1):
         super().__init__()
         self.measurements = measurements
         self.granularity = granularity

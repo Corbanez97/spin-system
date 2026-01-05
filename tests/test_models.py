@@ -29,7 +29,7 @@ class TestModels:
         # Check shape
         assert system.spin_state.shape == (replicas, L, L)
         # Check values are -1 or 1
-        unique_vals = np.unique(system.spin_state.numpy())
+        unique_vals = np.unique(system.spin_state.value().numpy())
         assert np.all(np.isin(unique_vals, [-1.0, 1.0]))
 
     def test_ising_energy_shape(self):
