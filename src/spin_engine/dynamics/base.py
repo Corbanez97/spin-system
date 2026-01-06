@@ -1,7 +1,7 @@
 import abc
 import tensorflow as tf
 
-from typing import Optional, TYPE_CHECKING
+from typing import Optional, TYPE_CHECKING, cast
 
 if TYPE_CHECKING:
     from spin_engine.models.base import BaseSpinSystem
@@ -31,13 +31,14 @@ class Dynamics(abc.ABC):
         pass
 
     @abc.abstractmethod
+    @tf.function
     def sweep(
         self,
         tracker: 'Tracker',
         beta: float,
-        num_disturbances: tf.Tensor,
+        sweep_length: int,
+        num_disturbances: tf.Tensor = cast(tf.Tensor, 1),
         theta_max: Optional[tf.Tensor] = None,
-        sweep_length: Optional[int] = None,
     ) -> None:
         """
         The orchestrator of multiple steps of the simulation.
