@@ -1,34 +1,36 @@
 import tensorflow as tf
-from typing import Optional
+from typing import Optional, TYPE_CHECKING
 from .base import Measurement
+
+if TYPE_CHECKING:
+    from spin_engine.models.base import BaseSpinSystem
 
 
 class OverlapMatrix(Measurement):
     """
     Computes the overlap matrix between all replicas.
     Q_ab = (1/N) * sum_i s_i^a * s_i^b
+
     Returns: Tensor of shape (replicas, replicas)
     """
 
-    def compute(self, spin_state: Optional[tf.Tensor] = None) -> tf.Tensor:
-        if spin_state is None:
-            spin_state = self.system.spin_state.value()
+    def compute(self, spin_state: Optional[tf.Variable | tf.Tensor] = None,
+                system: Optional['BaseSpinSystem'] = None) -> tf.Tensor:
 
-        spin_flat = tf.reshape(spin_state, (self.system.lattice_replicas, -1))
+        state, sys = self._resolve(spin_state, system)
 
-        # We need number_spins. In BaseSpinSystem (or subclasses) it should be available.
-        # Check if BaseSpinSystem has number_spins.
-        # legacy_core.py line 38: self.number_spins = tf.cast(lattice_length ** lattice_dim, tf.float32)
-        # Assuming BaseSpinSystem has it or can compute it.
-        # Let's rely on self.system.number_spins if available, or compute from shape.
+        replicas = sys.lattice_replicas if sys else state.shape[0]
 
-        # Safe access to number_spins, assuming it's a property or attribute
-        if hasattr(self.system, 'number_spins'):
-            N = self.system.number_spins
+        if sys is not None:
+            if hasattr(sys, 'number_spins'):
+                n_spins = tf.cast(sys.number_spins, tf.float32)
+            else:
+                n_spins = tf.cast(tf.reduce_prod(sys.shape), tf.float32)
         else:
-            N = tf.cast(tf.reduce_prod(self.system.shape), tf.float32)
+            n_spins = tf.cast(tf.reduce_prod(state.shape[1:]), tf.float32)
+
+        spin_flat = tf.reshape(state, (replicas, -1))
 
         overlap = tf.matmul(spin_flat, spin_flat, transpose_b=True)
-        overlap /= N
 
-        return overlap
+        return overlap / n_spins

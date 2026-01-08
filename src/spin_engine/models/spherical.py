@@ -76,7 +76,7 @@ class SphericalSystem(BaseSpinSystem):
         return tf.sqrt(self.number_spins) * normalized_spins
 
     # @tf.function
-    def compute_energy(self, spin_state: Optional[tf.Tensor] = None) -> tf.Tensor:
+    def compute_energy(self, spin_state: Optional[tf.Variable | tf.Tensor] = None) -> tf.Tensor:
         if spin_state is None:
             spin_state = self.spin_state.value()
         # Flatten spins: (replicas, N)

@@ -59,12 +59,12 @@ The script `examples/ising.py` performs a temperature sweep on a 2D Ising model.
 #### Magnetization Evolution
 The following plot shows the Monte Carlo time evolution of magnetization for various temperatures. Note the rapid convergence to zero magnetization at high temperatures (low Beta) and stable non-zero magnetization at low temperatures (high Beta).
 
-![Ising Evolution](examples/ising_evolution.png)
+![Ising Evolution](examples/images/ising_evolution.png)
 
 #### Magnetic Susceptibility
 The project successfully reproduces the critical behavior of the 2D Ising model. The plot below shows the magnetic susceptibility peaking around the critical point ($\beta_c \approx 0.44$), indicating the phase transition.
 
-![Ising Susceptibility](examples/ising_susceptibility.png)
+![Ising Susceptibility](examples/images/ising_susceptibility.png)
 
 ## Contact
 

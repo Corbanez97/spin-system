@@ -1,6 +1,9 @@
 import pytest
 import tensorflow as tf
-from typing import cast
+from typing import cast, Optional, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from spin_engine.models.base import BaseSpinSystem
 
 from spin_engine.interactions import PeriodicNearestNeighborInteraction
 from spin_engine.models import IsingSystem
@@ -105,24 +108,20 @@ class TestDynamics:
 
         # Mock tracker
         class MockMeasurement(Measurement):
-            def __init__(self, name):
-                super().__init__()
-                self.name = name
+            def compute(self, spin_state: Optional[tf.Variable | tf.Tensor] = None, system: Optional['BaseSpinSystem'] = None) -> tf.Tensor:
+                spin_state, _ = self._resolve(spin_state, system)
+                return tf.reduce_mean(tf.cast(spin_state, tf.float32))
 
-            def compute(self, spin_state=None, system=None):
-                return tf.reduce_mean(tf.cast(system.spin_state, tf.float32))
-
-        tracker = Tracker([MockMeasurement("Magnetization")])
+        tracker = Tracker([MockMeasurement()])
 
         # Run small sweep
         simulation.sweep(tracker, beta=0.1,
                          num_disturbances=1, sweep_length=10)
 
         # Check that history is populated
-        assert "Magnetization" in tracker.history
+        assert "MockMeasurement" in tracker.history
         # 0 to 10 inclusive
-        assert tracker.history["Magnetization"].shape[0] == 11 or tf.shape(
-            tracker.history["Magnetization"])[0] == 11
+        assert tracker.history["MockMeasurement"].numpy().shape[0] == 11
 
     def test_sweep_tracking_integration(self, setup_system):
         simulation = setup_system['simulation']
@@ -143,8 +142,7 @@ class TestDynamics:
                          sweep_length=sweep_length)
 
         expected_steps = (sweep_length // granularity) + 1
-        assert tracker.history["Dummy"].shape[0] == expected_steps or tf.shape(
-            tracker.history["Dummy"])[0] == expected_steps
+        assert tracker.history["Dummy"].numpy().shape[0] == expected_steps
 
     def test_high_temperature_convergence(self):
         # High Temp -> Low Beta -> Magnetization should be random (near 0 avg)
@@ -164,9 +162,10 @@ class TestDynamics:
         simulation = MetropolisHastings(ising_system)
 
         class Magnetization(Measurement):
-            def compute(self, spin_state=None, system=None):
+            def compute(self, spin_state: Optional[tf.Variable | tf.Tensor] = None, system: Optional['BaseSpinSystem'] = None) -> tf.Tensor:
+                spin_state, _ = self._resolve(spin_state, system)
                 # Mean per replica
-                return tf.reduce_mean(tf.cast(system.spin_state, tf.float32), axis=[1, 2])
+                return tf.reduce_mean(tf.cast(spin_state, tf.float32), axis=[1, 2])
 
         tracker = Tracker([Magnetization()])
 
@@ -198,8 +197,9 @@ class TestDynamics:
         simulation = MetropolisHastings(ising_system)
 
         class Magnetization(Measurement):
-            def compute(self, spin_state=None, system=None):
-                return tf.reduce_mean(tf.cast(system.spin_state, tf.float32), axis=[1, 2])
+            def compute(self, spin_state: Optional[tf.Variable | tf.Tensor] = None, system: Optional['BaseSpinSystem'] = None) -> tf.Tensor:
+                spin_state, _ = self._resolve(spin_state, system)
+                return tf.reduce_mean(tf.cast(spin_state, tf.float32), axis=[1, 2])
 
         tracker = Tracker([Magnetization()])
 

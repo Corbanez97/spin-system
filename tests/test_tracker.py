@@ -1,9 +1,13 @@
-
 import pytest
 import tensorflow as tf
 from spin_engine.dynamics.tracker import Tracker
 from spin_engine.measurements.base import Measurement
-from typing import Optional, Any
+from spin_engine.models.base import BaseSpinSystem
+from typing import Optional, Any, TYPE_CHECKING, cast
+
+if TYPE_CHECKING:
+    from spin_engine.measurements.base import Measurement
+    from spin_engine.models.base import BaseSpinSystem
 
 
 class MockMeasurement(Measurement):
@@ -11,7 +15,7 @@ class MockMeasurement(Measurement):
         super().__init__()
         self.name = name
 
-    def compute(self, spin_state: Optional[tf.Tensor] = None, system: Optional[Any] = None) -> Any:
+    def compute(self, spin_state: Optional[tf.Variable | tf.Tensor] = None, system: Optional['BaseSpinSystem'] = None) -> Any:
         return tf.constant(1.0, dtype=tf.float32)
 
 
@@ -20,35 +24,41 @@ class TestTracker:
         measurements = [MockMeasurement("M1"), MockMeasurement("M2")]
         tracker = Tracker(measurements, granularity=1)
 
-        sweep_length = tf.constant(10, dtype=tf.int32)
+        sweep_length = cast(tf.Tensor, 10)
         arrays = tracker.init_run(sweep_length)
 
         assert len(arrays) == 2
         # Size should be sweep_length // granularity + 1
-        expected_size = 11
+        expected_size = cast(tf.Tensor, 11)
         for array in arrays.values():
-            assert array.size().numpy() == expected_size
+            assert array.size() == expected_size
 
     def test_track_granularity(self):
         measurements = [MockMeasurement()]
         granularity = 5
         tracker = Tracker(measurements, granularity=granularity)
 
-        sweep_length = tf.constant(20, dtype=tf.int32)
+        sweep_length = cast(tf.Tensor, 20)
         arrays = tracker.init_run(sweep_length)
 
         # Create a mock system with spin_state
-        class MockSystem:
+        class MockSystem(BaseSpinSystem):
             spin_state = tf.zeros((1, 1))
 
-        system = MockSystem()
+            def initialize_state(self) -> tf.Tensor:
+                return tf.zeros((1, 1))
+
+            def compute_energy(self, spin_state: tf.Variable | tf.Tensor | None = None) -> tf.Tensor:
+                return tf.zeros((1))
+
+        system = MockSystem(0, 0, 0)
 
         # Track step 0 (should write)
-        arrays = tracker.track(tf.constant(0), system, arrays)
+        arrays = tracker.track(cast(tf.Tensor, 0), system, arrays)
         # Track step 1 (should NOT write)
-        arrays = tracker.track(tf.constant(1), system, arrays)
+        arrays = tracker.track(cast(tf.Tensor, 1), system, arrays)
         # Track step 5 (should write)
-        arrays = tracker.track(tf.constant(5), system, arrays)
+        arrays = tracker.track(cast(tf.Tensor, 5), system, arrays)
 
         # Finalize to check values
         tracker.finalize(arrays)
@@ -70,17 +80,23 @@ class TestTracker:
     def test_finalize(self):
         measurements = [MockMeasurement()]
         tracker = Tracker(measurements, granularity=1)
-        sweep_length = tf.constant(2)
+        sweep_length = cast(tf.Tensor, tf.constant(2))
 
         arrays = tracker.init_run(sweep_length)
 
-        class MockSystem:
+        class MockSystem(BaseSpinSystem):
             spin_state = tf.zeros((1, 1))
 
-        system = MockSystem()
-        arrays = tracker.track(tf.constant(0), system, arrays)
-        arrays = tracker.track(tf.constant(1), system, arrays)
-        arrays = tracker.track(tf.constant(2), system, arrays)
+            def initialize_state(self) -> tf.Tensor:
+                return tf.zeros((1, 1))
+
+            def compute_energy(self, spin_state: tf.Variable | tf.Tensor | None = None) -> tf.Tensor:
+                return tf.zeros((1))
+
+        system = MockSystem(0, 0, 0)
+        arrays = tracker.track(cast(tf.Tensor, 0), system, arrays)
+        arrays = tracker.track(cast(tf.Tensor, 1), system, arrays)
+        arrays = tracker.track(cast(tf.Tensor, 2), system, arrays)
 
         tracker.finalize(arrays)
 
@@ -95,7 +111,7 @@ class TestTracker:
 
         assert len(tracker.measurements) == num_measurements
 
-        sweep_length = tf.constant(10)
+        sweep_length = cast(tf.Tensor, 10)
         arrays = tracker.init_run(sweep_length)
 
         assert len(arrays) == num_measurements
