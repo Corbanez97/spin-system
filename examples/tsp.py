@@ -1,3 +1,4 @@
+# type: ignore
 import numpy as np
 import tensorflow as tf
 import networkx as nx
