@@ -56,9 +56,11 @@ The project is designed for researchers and practitioners working in statistical
 
 ### Ising–QUBO Equivalence
 The Ising Hamiltonian can be transformed into a **Quadratic Unconstrained Binary Optimization (QUBO)** problem via the variable substitution:
+
 $$
 s_i \in \{-1, 1\} \quad \longleftrightarrow \quad x_i \in \{0, 1\}, \quad s_i = 1 - 2x_i
 $$
+
 This equivalence allows Ising-based solvers to address a broad class of combinatorial optimization problems.
 
 ### Quantum-Inspired and Analog Computing
