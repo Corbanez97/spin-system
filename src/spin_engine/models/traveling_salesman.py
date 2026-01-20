@@ -38,61 +38,73 @@ class TravelingSalesmanSystem(BaseSpinSystem):
         self.A = tf.constant(constraint_strength, dtype=tf.float32)
         self.B = tf.constant(distance_strength, dtype=tf.float32)
 
+    # def initialize_state_legacy(self) -> tf.Tensor:
+    #     """
+    #     Initializes random spins.
+    #     """
+    #     # Start with random -1/+1 spins
+    #     full_shape = [self.lattice_replicas,
+    #                   self.lattice_length, self.lattice_length]
+    #     rand = tf.random.uniform(full_shape)
+    #     return tf.where(rand > 0.5, 1.0, -1.0)
+
     def initialize_state(self) -> tf.Tensor:
         """
-        Initializes random spins.
-        """
-        # Start with random -1/+1 spins
-        full_shape = [self.lattice_replicas,
-                      self.lattice_length, self.lattice_length]
-        rand = tf.random.uniform(full_shape)
-        return tf.where(rand > 0.5, 1.0, -1.0)
+        Initializes valid Permutation Matrices for TSP.
 
-    # @tf.function
+        Guarantees:
+        1. Each row has exactly one +1.0 (Each city visited once).
+        2. Each column has exactly one +1.0 (One city per time step).
+        3. All other values are -1.0.
+        """
+        noise = tf.random.uniform(
+            (self.lattice_replicas, self.lattice_length),
+            dtype=tf.float32
+        )
+        random_permutation_indices = tf.argsort(noise, axis=1)
+
+        spin_state = tf.one_hot(
+            random_permutation_indices,
+            depth=self.lattice_length,
+            dtype=tf.float32
+        )
+
+        spin_state = 2.0 * spin_state - 1.0
+
+        return spin_state
+
     def compute_energy(self, spin_state: Optional[tf.Variable | tf.Tensor] = None) -> tf.Tensor:
         """
         Computes H = H_constraints + H_distance
+
+
+        --- H_A: Constraints ---
+        Sum over columns (axis 2: time steps) -> Should be 1
+        Sum over rows (axis 1: cities) -> Should be 1
+        A topology penalty could be added if the interaction matrix between cities is not fully connected.
+            However, the if added a distance cost great enought, we would not need it.
+        --- H_B: Distance Cost ---
+        The distance cost is the sum of all distances between nodes
         """
         if spin_state is None:
             spin_state = self.spin_state
 
-        # 1. Convert Ising spins {-1, 1} to Binary variables {0, 1}
-        # x = (s + 1) / 2
-        x = tf.divide(tf.add(spin_state, 1.0), 2.0)
+        spin_state = tf.divide(tf.add(spin_state, 1.0), 2.0)
 
-        # --- H_A: Constraints ---
-        # Sum over columns (axis 2: time steps) -> Should be 1
-        row_sums = tf.reduce_sum(x, axis=2)
-        # Sum over rows (axis 1: cities) -> Should be 1
-        col_sums = tf.reduce_sum(x, axis=1)
+        row_sums = tf.reduce_sum(spin_state, axis=2)
 
-        # Penalty: A * sum((1 - sum)^2)
+        col_sums = tf.reduce_sum(spin_state, axis=1)
+
         row_penalty = tf.reduce_sum(tf.square(1.0 - row_sums), axis=1)
         col_penalty = tf.reduce_sum(tf.square(1.0 - col_sums), axis=1)
 
         term_A = self.A * (row_penalty + col_penalty)
 
-        # --- H_B: Distance Cost ---
-        # We need sum_{u,v} W_{uv} * sum_j x_{u,j} * x_{v, j+1}
+        spin_state_next = tf.roll(spin_state, shift=-1, axis=2)
 
-        # Shift x to get x_{v, j+1} (Rolling the time axis)
-        # Using roll with shift -1 moves index 1 to 0, effectively getting "next step"
-        x_next = tf.roll(x, shift=-1, axis=2)
+        step_correlation = tf.matmul(
+            spin_state, spin_state_next, transpose_b=True)
 
-        # Einstein summation to compute the cost efficiently:
-        # r: replicas
-        # u: source city (rows of x)
-        # v: dest city (rows of x_next)
-        # j: time step (cols of x)
-        # W_{uv} * x_{r,u,j} * x_{r,v,j}
-
-        # Step 1: Compute interaction between step j and j+1 for all replicas
-        # Shape: (replicas, cities_u, cities_v)
-        # Correlates "u at step j" with "v at step j+1"
-        step_correlation = tf.matmul(x, x_next, transpose_b=True)
-
-        # Step 2: Multiply by weight matrix and sum
-        # element-wise multiply (broadcasting W over replicas) then sum matrix
         dist_cost = tf.reduce_sum(
             step_correlation * self.cost_matrix, axis=[1, 2])
 
