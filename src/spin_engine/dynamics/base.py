@@ -30,6 +30,8 @@ class Dynamics(abc.ABC):
         """
         pass
 
+    # TODO: Add annealing inside the sweep to avoid retracing.
+
     @abc.abstractmethod
     @tf.function
     def sweep(

@@ -1,73 +1,110 @@
 # Spin System
 
-## Project Goal
-The goal of this project is to provide a highly modular, TensorFlow-based framework for simulating the dynamics of classical spin systems. By leveraging TensorFlow, the project aims to utilize vectorization and potential GPU acceleration to efficiently simulate large lattices and complex interactions. The framework is designed to be easily extensible, allowing researchers to define new models, interactions, and dynamic rules with minimal effort.
+![Python](https://img.shields.io/badge/Python-Scientific%20Computing-blue)
+![TensorFlow](https://img.shields.io/badge/TensorFlow-Vectorized%20Simulation-orange)
+![Monte Carlo](https://img.shields.io/badge/Method-Monte%20Carlo-brightgreen)
+![Ising Model](https://img.shields.io/badge/Physics-Ising%20Model-purple)
+![Status](https://img.shields.io/badge/Status-Research%20%2F%20Experimental-lightgrey)
 
-## Current State
-The project currently supports the following features:
-- **Models**: unit-vector spin models including Ising (discrete) and Spherical (continuous) systems.
-- **Interactions**: Arbitrary pairwise coupling tensors, with built-in generators for Periodic Nearest-Neighbor, Decaying, Curie-Weiss, and Gaussian random interactions.
-- **Dynamics**: Metropolis-Hastings Monte Carlo dynamics.
-- **Measurements**: Real-time tracking of scalar observables (Energy, Magnetization) and susceptibility.
 
-## Main Differences
-Compared to other available options for Spin Dynamics:
-- **TensorFlow Backend**: Utilizes modern tensor operations for performance, significantly speeding up updates on large lattices compared to pure Python loops.
-- **Modular Architecture**: Decouples the physical model (spins), the interaction topology (couplings), and the time evolution (dynamics), making it easier to mix and match components.
-- **Flexible Tracking**: Includes a specialized `Tracker` class that can conceptually handle any observable that can be computed from the system state, recording history efficiently using `TensorArray`s.
+## Overview
+**Spin System** is a modular, TensorFlow-based framework for simulating classical spin systems with an emphasis on performance, extensibility, and theoretical rigor. The framework leverages vectorized operations to efficiently handle large lattices and complex interaction topologies, enabling both physical simulations and experimentation with optimization-inspired computational paradigms.
 
-## Walkthrough: src/spin_engine
+The project is designed for researchers and practitioners working in statistical physics, complex systems, and quantum-inspired optimization.
 
-The core logic resides in `src/spin_engine`, organized into four main modules. Here is how they interact:
 
-### 1. models
-**Purpose**: Defines the physical system, including the lattice structure, spin dimensionality (discrete vs continuous), and the energy function.
-- **Interactions**: Holds `spin_state` (the actual configuration) and `interaction_matrix` (the couplings).
-- **Key Class**: `BaseSpinSystem` provides the interface. `IsingSystem` and `SphericalSystem` are concrete implementations.
 
-### 2. interactions
-**Purpose**: Generates the coupling tensors ($J_{ij}$) that define the connectivity of the system.
-- **Interactions**: Used by `models` to initialize the system's Hamiltonian.
-- **Key Classes**: `PeriodicNearestNeighborInteraction` (standard d-dimensional lattice), `DecayingInteraction`, `CurieWeissInteraction`.
+## Project Objectives
+- Provide a flexible and extensible framework for simulating classical spin models.
+- Enable efficient large-scale simulations through TensorFlow-based vectorization.
+- Support experimentation with spin-based formulations of hard optimization problems.
+- Bridge concepts from statistical mechanics, analog computing, and computational complexity.
 
-### 3. dynamics
-**Purpose**: Defines the rules for time evolution.
-- **Interactions**: Takes a `system` and modifies its `spin_state` over time.
-- **Key Classes**:
-    - `MetropolisHastings`: Performs Monte Carlo sweeps. It proposes changes (flips or rotations), computes energy differences ($\Delta E$), and accepts/rejects based on thermal probabilities.
-    - `Tracker`: Observes the simulation. It is passed to the `sweep` method to record measurements at specified intervals.
 
-### 4. measurements
-**Purpose**: Defines observables to be tracked.
-- **Interactions**: Instantiated with a `system` reference. Called by `Tracker` during the simulation to compute values like total energy or magnetization.
-- **Key Classes**: `Energy`, `Magnetization`, `MagneticSusceptibility`.
 
-### Interaction Flow
-1. **Define Interaction**: Generate an interaction matrix (e.g., Nearest Neighbor).
-2. **Create Model**: Initialize a System (e.g., Ising) with the lattice size and interaction matrix.
-3. **Setup Logic**: Instantiate `MetropolisHastings` dynamics with the system.
-4. **Prepare Tracking**: Create a `Tracker` with desired `Measurements`.
-5. **Run**: Execute `dynamics.sweep()`, passing the `Tracker`.
+## Current Capabilities
+
+### Spin Models
+- **Ising Model**: Discrete spins  $s_i \in \{-1, 1\}$.
+- **Spherical Model**: Continuous unit-vector spins.
+
+### Interaction Structures
+- Arbitrary pairwise coupling tensors.
+- Built-in interaction schemes:
+  - Periodic nearest-neighbor
+  - Distance-decaying couplings
+  - Curie–Weiss (mean-field)
+  - Gaussian random couplings
+
+### Dynamics
+- **Metropolis–Hastings Monte Carlo** dynamics.
+- Support for temperature schedules and annealing processes.
+
+### Measurements and Observables
+- Energy
+- Magnetization
+- Magnetic susceptibility  
+- Real-time observable tracking during simulations
+
+
+
+## Theoretical Background
+
+### Spin Systems and Computational Complexity
+- Many **NP-Hard** and **NP-Complete** problems can be mapped, in polynomial time, to the problem of finding the ground state of an Ising Hamiltonian.
+- An **Ising Machine**, by converging to its ground state, effectively provides solutions to these mapped optimization problems.
+
+### Ising–QUBO Equivalence
+The Ising Hamiltonian can be transformed into a **Quadratic Unconstrained Binary Optimization (QUBO)** problem via the variable substitution:
+$$
+s_i \in \{-1, 1\} \quad \longleftrightarrow \quad x_i \in \{0, 1\}, \quad s_i = 1 - 2x_i
+$$
+This equivalence allows Ising-based solvers to address a broad class of combinatorial optimization problems.
+
+### Quantum-Inspired and Analog Computing
+- Spin system simulations can be interpreted as **quantum-inspired algorithms**, even when implemented on classical hardware.
+- An **Ising Machine** is an analog computational device that exploits massively parallel and asynchronous dynamics to evolve toward low-energy states, in contrast to sequential digital algorithms.
+
+### Simulated Annealing
+- Under ideal conditions, an inverse-logarithmic temperature schedule guarantees convergence to the global minimum (Geman & Geman).
+- This theoretical principle motivates **simulated annealing**, which underpins the primary optimization strategy implemented in this framework.
+
+
 
 ## Examples
 
-The `examples/` directory contains scripts demonstrating the framework capabilities.
+The `examples/` directory contains reference scripts demonstrating the framework’s capabilities.
 
-### Ising Model Evolution
-The script `examples/ising.py` performs a temperature sweep on a 2D Ising model. It illustrates phase transitions by tracking magnetization across different inverse temperatures (Beta).
+### 2D Ising Model Simulation
+The script `examples/ising.py` performs a temperature sweep on a two-dimensional Ising lattice and records key observables to illustrate phase transition behavior.
 
-#### Magnetization Evolution
-The following plot shows the Monte Carlo time evolution of magnetization for various temperatures. Note the rapid convergence to zero magnetization at high temperatures (low Beta) and stable non-zero magnetization at low temperatures (high Beta).
+#### Magnetization vs. Temperature
+- High temperatures (low $\beta$) lead to rapid convergence toward zero magnetization.
+- Low temperatures (high $\beta$) exhibit stable, non-zero magnetization states.
 
 ![Ising Evolution](examples/images/ising_evolution.png)
 
 #### Magnetic Susceptibility
-The project successfully reproduces the critical behavior of the 2D Ising model. The plot below shows the magnetic susceptibility peaking around the critical point ($\beta_c \approx 0.44$), indicating the phase transition.
+- The simulation reproduces the expected critical behavior of the 2D Ising model.
+- A peak in susceptibility is observed near the critical inverse temperature:
+  $$
+  \beta_c \approx 0.44
+  $$
 
 ![Ising Susceptibility](examples/images/ising_susceptibility.png)
 
+
+
+## Intended Audience
+- Researchers in statistical and computational physics
+- Practitioners exploring quantum-inspired optimization methods
+- Students studying spin models, Monte Carlo methods, and complex systems
+- Engineers interested in analog and non-von-Neumann computation paradigms
+
+
+
 ## Contact
 
-**Lucas Gomes de Oliveira Corbanez**
-- Email: lucascorbanez@gmail.com
+**Lucas Gomes de Oliveira Corbanez**  
+- Email: lucascorbanez@gmail.com  
 - Institutional: lucas.gomes.oliveira@uel.br
