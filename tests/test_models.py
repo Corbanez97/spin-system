@@ -3,7 +3,7 @@ import tensorflow as tf
 import numpy as np
 from spin_engine.models.ising import IsingSystem
 from spin_engine.models.spherical import SphericalSystem
-from spin_engine.models.z2_gauge import Z2GaugeSystem
+from spin_engine.models.wegner import WegnerSystem
 import sys
 import os
 
@@ -73,7 +73,7 @@ class TestModels:
     def test_z2_placeholder(self):
         # Should raise NotImplementedError on init or strict usage?
         # We implemented it to pass init but fail on methods
-        system = Z2GaugeSystem(
+        system = WegnerSystem(
             lattice_dim=2, lattice_length=10, lattice_replicas=1)
 
         with pytest.raises(NotImplementedError):

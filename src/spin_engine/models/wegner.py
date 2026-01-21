@@ -3,7 +3,7 @@ from .base import BaseSpinSystem
 from typing import Optional
 
 
-class Z2GaugeSystem(BaseSpinSystem):
+class WegnerSystem(BaseSpinSystem):
     def __init__(self, *args, **kwargs):
         # Placeholder implementation
         pass
