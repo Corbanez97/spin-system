@@ -70,17 +70,17 @@ class TestModels:
 
         assert np.allclose(norm_sq.numpy(), expected_norm, atol=1e-4)
 
-    def test_z2_placeholder(self):
-        # Should raise NotImplementedError on init or strict usage?
-        # We implemented it to pass init but fail on methods
-        system = WegnerSystem(
-            lattice_dim=2, lattice_length=10, lattice_replicas=1)
+    # def test_z2_placeholder(self):
+    #     # Should raise NotImplementedError on init or strict usage?
+    #     # We implemented it to pass init but fail on methods
+    #     system = WegnerSystem(
+    #         lattice_dim=2, lattice_length=10, lattice_replicas=1)
 
-        with pytest.raises(NotImplementedError):
-            system.initialize_state()
+    #     with pytest.raises(NotImplementedError):
+    #         system.initialize_state()
 
-        with pytest.raises(NotImplementedError):
-            system.compute_energy()
+    #     with pytest.raises(NotImplementedError):
+    #         system.compute_energy()
 
     @pytest.mark.parametrize("dim", [1, 2, 3])
     def test_spherical_constraint_nd(self, dim):

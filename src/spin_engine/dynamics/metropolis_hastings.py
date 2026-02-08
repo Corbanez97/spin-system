@@ -81,8 +81,12 @@ class MetropolisHastings(Dynamics):
             random_vals < prob_accept
         )
 
+        rank = tf.rank(self.system.spin_state)
+        target_shape = tf.concat(
+            [[-1], tf.ones([tf.add(rank, -1)], dtype=tf.int32)], axis=0)
+
         new_spin_state = tf.where(
-            tf.reshape(accept, (-1,) + (1,) * self.system.lattice_dim),
+            tf.reshape(accept, target_shape),
             updated,
             self.system.spin_state
         )
