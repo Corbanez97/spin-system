@@ -9,13 +9,13 @@
 **Goal**: Enable simulation and analysis of disordered spin systems with frustration.
 
 ### 1.1 Edwards-Anderson Model
-- [ ] Create `EdwardsAndersonSystem` in `models/edwards_anderson.py`
+- [x] Create `EdwardsAndersonSystem` in `models/edwards_anderson.py`
   - Ising spins on a *d*-dimensional lattice with **quenched random couplings** J_ij drawn from ±J or Gaussian distribution.
   - Reuse `BaseSpinSystem`; accept a pre-generated random interaction matrix from `GaussianInteraction` or a new `BinaryRandomInteraction(±J)`.
   - `compute_energy()` identical to `IsingSystem` but semantically distinct (no external field needed by default).
-- [ ] Add a `BinaryRandomInteraction` class to `interactions/standard.py`
+- [x] Add a `BinaryRandomInteraction` class to `interactions/standard.py`
   - `.generate(D, L)` returns J_ij ∈ {-J, +J} drawn uniformly, symmetric, with zero diagonal.
-- [ ] Write tests in `tests/test_edwards_anderson.py`
+- [x] Write tests in `tests/test_edwards_anderson.py`
   - Verify energy computation matches hand-calculated values on a small 2×2 lattice.
   - Verify that the coupling matrix is symmetric with zero diagonal.
 
