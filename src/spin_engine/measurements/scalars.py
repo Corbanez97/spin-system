@@ -62,3 +62,43 @@ class MagneticSusceptibility(Measurement):
         m_per_replica = tf.reduce_mean(flat_state, axis=1)
 
         return tf.math.reduce_variance(m_per_replica)
+
+
+class SpinGlassOrderParameter(Measurement):
+    """
+    Computes the Edwards-Anderson spin glass order parameter: q_EA = [1/N Σ ⟨s_i⟩²]_avg.
+    Requires stateful accumulation over a sweep to compute ⟨s_i⟩.
+    Must be instantiated with a system to initialize the state tracker.
+    Returns a scalar.
+    """
+
+    def __init__(self, system: Optional['BaseSpinSystem'] = None) -> None:
+        super().__init__(system)
+        if system is None:
+            raise ValueError(
+                "SpinGlassOrderParameter requires a system at initialization to shape the accumulation variables."
+            )
+        self.spin_sum = tf.Variable(
+            tf.zeros_like(system.spin_state, dtype=tf.float32), trainable=False
+        )
+        self.count = tf.Variable(0.0, dtype=tf.float32, trainable=False)
+
+    def compute(self, spin_state: Optional[tf.Variable | tf.Tensor] = None,
+                system: Optional['BaseSpinSystem'] = None) -> tf.Tensor:
+
+        state, sys = self._resolve(spin_state, system)
+
+        self.spin_sum.assign_add(tf.cast(state, tf.float32))
+        self.count.assign_add(1.0)
+
+        s_avg = self.spin_sum / self.count
+        
+        axes_to_reduce = tf.range(1, tf.rank(s_avg))
+        q_ea_per_replica = tf.reduce_mean(tf.square(s_avg), axis=axes_to_reduce)
+
+        return tf.reduce_mean(q_ea_per_replica)
+
+    def reset(self):
+        """Reset the accumulation variables to start a new measurement period."""
+        self.spin_sum.assign(tf.zeros_like(self.spin_sum))
+        self.count.assign(0.0)

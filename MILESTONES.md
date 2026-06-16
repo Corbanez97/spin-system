@@ -4,7 +4,7 @@
 
 ---
 
-## Milestone 1 — Spin Glass Infrastructure ⬜
+## Milestone 1 — Spin Glass Infrastructure ✅
 
 **Goal**: Enable simulation and analysis of disordered spin systems with frustration.
 
@@ -20,28 +20,35 @@
   - Verify that the coupling matrix is symmetric with zero diagonal.
 
 ### 1.2 Sherrington-Kirkpatrick (SK) Model
-- [ ] Create `SherringtonKirkpatrickSystem` in `models/sk.py`
+- [x] Create `SherringtonKirkpatrickSystem` in `models/sk.py`
   - Fully connected Ising model with Gaussian random couplings J_ij ~ N(0, J/√N).
   - Can reuse `IsingSystem` with a `GaussianInteraction` whose std is scaled by 1/√N, or create a dedicated class for clarity.
   - Should support replica-wise computation for overlap analysis.
-- [ ] Add example script `examples/sk_glass.py`
+- [x] Add example script `examples/sk_glass.py`
   - Simulate the SK model across temperatures.
   - Plot energy and magnetization.
 
 ### 1.3 Overlap Distribution P(q)
-- [ ] Implement `OverlapDistribution` measurement in `measurements/correlations.py`
+- [x] Implement `OverlapDistribution` measurement in `measurements/correlations.py`
   - Uses the existing `OverlapMatrix` to extract off-diagonal elements q_ab.
-  - Returns a histogram / distribution of q values across replica pairs.
-- [ ] Implement `ParisiOverlapParameter` measurement
+  - Returns a 1D tensor of upper-triangular overlaps (replicas*(replicas-1)/2 values).
+- [x] Implement `ParisiOverlapParameter` measurement
   - Computes ⟨q²⟩ - ⟨|q|⟩² as an indicator of replica symmetry breaking (RSB).
-- [ ] Add plotting utilities for P(q) visualization.
+- [x] Add plotting utilities for P(q) visualization
+  - KDE-based P(q) plots in `examples/sk_glass.py`, `examples/ea_glass.py`, and `examples/spin_glass_phase_diagram.py`.
 
 ### 1.4 Spin Glass Order Parameter & Phase Diagram
-- [ ] Implement `SpinGlassOrderParameter` (q_EA = [1/N Σ ⟨s_i⟩²]_avg)
-  - Requires time-averaging within a sweep and disorder-averaging across samples.
-- [ ] Create `examples/spin_glass_phase_diagram.py`
+- [x] Implement `SpinGlassOrderParameter` (q_EA = [1/N Σ ⟨s_i⟩²]_avg)
+  - Stateful measurement using `tf.Variable` accumulation over MC steps.
+  - Includes `reset()` method for multi-temperature sweeps.
+- [x] Create `examples/spin_glass_phase_diagram.py`
   - Temperature sweep showing paramagnetic → spin glass transition.
-  - Plot q_EA vs. temperature and compare with known T_g.
+  - Plots q_EA vs T and P(q) distributions.
+- [x] Add χ_SG = N⟨q²⟩ susceptibility analysis to `examples/sk_glass.py` and `examples/ea_glass.py`
+  - Multi-dimension comparison (SK: D=1,2; EA: D=2,3).
+  - Susceptibility peak detection to locate T_c numerically.
+- [x] Create analytical documentation in `docs/spin_glass_analytics.md`
+  - Derivation of T_c for SK and EA models, replica method, RSB, critical exponents.
 
 **How to achieve**:
 1. Start with the EA model since `GaussianInteraction` already exists — just wire it up.
@@ -202,9 +209,9 @@
 | Priority | Milestone | Rationale |
 |----------|-----------|-----------|
 | 🔴 High | 2.1–2.2 Gauge measurements | Unblock topological phase research (stubs exist) |
-| 🔴 High | 1.1–1.2 Spin glass models | Core research goal, infrastructure mostly exists |
+| ✅ Done | 1.1–1.2 Spin glass models | Core research goal, infrastructure mostly exists |
 | 🟡 Medium | 3.1–3.2 Annealing + Wolff | Performance bottleneck for accurate phase transition studies |
-| 🟡 Medium | 1.3–1.4 Overlap & phase diagram | Requires spin glass models first |
+| ✅ Done | 1.3–1.4 Overlap & phase diagram | Requires spin glass models first |
 | 🟡 Medium | 2.3 Wegner phase transition | Requires gauge measurements first |
 | 🟢 Lower | 3.3–3.4 Parallel tempering + TF | Quality-of-life improvements |
 | 🟢 Lower | 4.x New models | Expands scope but not blocking core goals |
