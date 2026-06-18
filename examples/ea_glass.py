@@ -36,6 +36,38 @@ from spin_engine.measurements.scalars import Energy, Magnetization
 from spin_engine.measurements.correlations import OverlapDistribution
 
 
+def generate_betas(
+    num_betas: int = 25,
+    critical_beta: float = 0.909,
+    min_beta: float = 0.2,
+    max_beta: float = 2.5,
+) -> list[float]:
+    """Generates a list of betas concentrated around the critical temperature."""
+    dense_range = 0.15
+    num_dense = int(0.6 * num_betas)
+    num_sparse = num_betas - num_dense
+
+    betas_dense = np.linspace(
+        critical_beta - dense_range,
+        critical_beta + dense_range,
+        num_dense
+    )
+    lower_tail = np.linspace(
+        min_beta,
+        critical_beta - dense_range - 0.05,
+        num_sparse // 2
+    )
+    upper_tail = np.linspace(
+        critical_beta + dense_range + 0.05,
+        max_beta,
+        num_sparse - len(lower_tail)
+    )
+
+    betas = np.concatenate([lower_tail, betas_dense, upper_tail])
+    betas = np.sort(np.unique(betas))
+    return betas.tolist()
+
+
 # ---------------------------------------------------------------------------
 # Simulation
 # ---------------------------------------------------------------------------
@@ -59,35 +91,41 @@ def run_ea_sweep(
     interaction_matrix = nn_mask * random_J
 
     N = lattice_length ** lattice_dim
+    # Number of Monte Carlo sweeps to perform
+    sweeps = 5000 
+    sweep_length = sweeps * N
+    
     print(f"  EA: L={lattice_length}, D={lattice_dim}, N={N}, "
-          f"replicas={lattice_replicas}, sweeps={sweep_length}")
+          f"replicas={lattice_replicas}, sweeps={sweeps} (total steps={sweep_length})")
 
     results: dict = {}
 
+    # Initialize ONCE outside the loop for Simulated Annealing (hot to cold)
+    system = EdwardsAndersonSystem(
+        lattice_length=lattice_length,
+        lattice_dim=lattice_dim,
+        lattice_replicas=lattice_replicas,
+        interaction_matrix=interaction_matrix,
+        initial_magnetization=0.0, # Hot state (T=infinity)
+    )
+    sim = MetropolisHastings(system)
+
+    tracker = Tracker(
+        measurements=[
+            Energy(system),
+            Magnetization(system),
+            OverlapDistribution(system),
+        ],
+        granularity=granularity,
+    )
+
+    # Ascending betas = decreasing temperature (Annealing)
     for beta in betas:
         print(f"    β = {beta:.4f}")
 
-        system = EdwardsAndersonSystem(
-            lattice_length=lattice_length,
-            lattice_dim=lattice_dim,
-            lattice_replicas=lattice_replicas,
-            interaction_matrix=interaction_matrix,
-            initial_magnetization=0.5,
-        )
-        sim = MetropolisHastings(system)
-
-        tracker = Tracker(
-            measurements=[
-                Energy(system),
-                Magnetization(system),
-                OverlapDistribution(system),
-            ],
-            granularity=granularity,
-        )
-
         sim.sweep(
             tracker=tracker,
-            beta=beta,
+            beta=tf.constant(beta, dtype=tf.float32),
             num_disturbances=num_flips,
             sweep_length=sweep_length,
         )
@@ -186,7 +224,13 @@ def plot_ea_results(
 
         # (d) P(q)
         ax_pq = axes[row, 3]
-        selected = [b for b in [0.5, 0.8, 1.0, 1.5, 2.5] if b in results]
+        targets = [0.5, 0.8, 1.0, 1.5, 2.5]
+        all_betas = sorted(list(results.keys()))
+        selected = []
+        for target in targets:
+            closest_beta = min(all_betas, key=lambda b: abs(b - target))
+            if closest_beta not in selected:
+                selected.append(closest_beta)
         palette = sns.color_palette("coolwarm", len(selected))
         for i, beta in enumerate(selected):
             pq = results[beta]["OverlapDistribution"]
@@ -212,8 +256,8 @@ def plot_ea_results(
 # ---------------------------------------------------------------------------
 
 def main():
-    # Finer grid of β near expected 3D transition
-    betas = [0.2, 0.5, 0.8, 1.0, 1.2, 1.5, 2.0, 2.5]
+    # Concentration of β near expected 3D transition (Tc ≈ 1.1 => beta_c ≈ 0.909)
+    betas = generate_betas(num_betas=25, critical_beta=0.909, min_beta=0.2, max_beta=2.5)
     J = 1.0
 
     configs = [

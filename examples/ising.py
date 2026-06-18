@@ -1,155 +1,259 @@
+import os
+import json
+import numpy as np
 import tensorflow as tf
 import matplotlib.pyplot as plt
-import numpy as np
-from math import ceil, sqrt
-from typing import cast, List
+from typing import cast, List, Dict, Any
 
 from spin_engine.interactions import PeriodicNearestNeighborInteraction
 from spin_engine.models import IsingSystem
 from spin_engine.dynamics import MetropolisHastings
 from spin_engine.dynamics.tracker import Tracker
-from spin_engine.measurements.scalars import Energy, Magnetization, MagneticSusceptibility
+from spin_engine.measurements.scalars import Energy, Magnetization
 
 
-def generate_betas(num_betas: int = 12, critical_beta: float = 0.44068) -> List[float]:
-    """
-    Generates a list of betas concentrated around the critical temperature.
-    """
-    dense_range = 0.1
+def generate_betas(num_betas: int = 25, critical_beta: float = 0.44068) -> List[float]:
+    """Generates a list of betas concentrated around the critical temperature."""
+    dense_range = 0.05
     num_dense = int(0.6 * num_betas)
     num_sparse = num_betas - num_dense
 
-    # Dense points
     betas_dense = np.linspace(critical_beta - dense_range,
                               critical_beta + dense_range,
                               num_dense)
-    lower_tail = np.linspace(0.1, critical_beta -
-                             dense_range - 0.05, num_sparse // 2)
-    upper_tail = np.linspace(
-        critical_beta + dense_range + 0.05, 1.0, num_sparse - len(lower_tail))
+    lower_tail = np.linspace(0.1, critical_beta - dense_range - 0.02, num_sparse // 2)
+    upper_tail = np.linspace(critical_beta + dense_range + 0.02, 0.8, num_sparse - len(lower_tail))
 
     betas = np.concatenate([lower_tail, betas_dense, upper_tail])
     betas = np.sort(np.unique(betas))
-
     return betas.tolist()
 
 
 def run_simulation():
-    lattice_dim = 2
-    lattice_length = 32
+    # Simulation Parameters
+    L_list = [8, 16, 32]
     lattice_replicas = 64
-    # Number of sites N = L^2
-    num_sites = lattice_length ** 2
-
-    interaction_matrix = PeriodicNearestNeighborInteraction().generate(
-        lattice_dim, lattice_length)
-
+    betas = generate_betas(25)
+    
     granularity = 100
+    
     num_flips = cast(tf.Tensor, tf.constant(1))
-    sweep_length = 25000
-    equilibration_steps = sweep_length * granularity // 2
+    
+    # Storage for results
+    results_dict: Dict[str, Any] = {'L_list': L_list, 'betas': betas, 'data': {}}
+    
+    print(f"Starting Ising Finite-Size Scaling Simulation.")
+    print(f"Lattice sizes: {L_list}")
+    print(f"Number of betas: {len(betas)}")
+    print(f"Critical Beta (Onsager): 0.44068")
 
-    betas = generate_betas(12)
-    results = {}
-    susceptibility_results = []
-
-    print(f"Starting simulation with {len(betas)} betas: {betas}")
-
-    for beta in betas:
-        print(f"Running for beta={beta:.4f}")
-
+    for L in L_list:
+        results_dict['data'][str(L)] = {
+            'mag': [], 'chi': [], 'cv': [], 'binder': []
+        }
+        
+        N = L * L
+        interaction_matrix = PeriodicNearestNeighborInteraction().generate(2, L)
+        
+        # Define sweep length dynamically based on system size L to ensure proper equilibration
+        if L == 8:
+            sweep_length = 150000
+        elif L == 16:
+            sweep_length = 300000
+        else: # L == 32
+            sweep_length = 600000
+            
+        burn_in_steps = int((sweep_length / granularity) * 0.2)
+        
+        print(f"\n--- Running for Lattice Size L={L} (sweep_length={sweep_length}) ---")
+        
+        # Initialize ONCE per lattice size to enable Simulated Annealing
         ising_system = IsingSystem(
-            lattice_dim=lattice_dim,
-            lattice_length=lattice_length,
+            lattice_dim=2,
+            lattice_length=L,
             lattice_replicas=lattice_replicas,
             interaction_matrix=interaction_matrix,
-            initial_magnetization=.5
+            initial_magnetization=1.0
         )
         simulation = MetropolisHastings(ising_system)
-
+        
         tracker = Tracker(measurements=[
             Energy(ising_system),
             Magnetization(ising_system)
         ], granularity=granularity)
+        
+        for beta in reversed(betas):
+            simulation.sweep(
+                tracker=tracker,
+                beta=tf.constant(beta, dtype=tf.float32),
+                num_disturbances=num_flips,
+                sweep_length=sweep_length
+            )
+            
+            # Extract data and discard burn-in
+            E_hist = tracker.history['Energy'].numpy()[burn_in_steps:, :] # shape: (steps, replicas)
+            M_hist = tracker.history['Magnetization'].numpy()[burn_in_steps:, :]
+            
+            # Normalize energy per spin
+            e_hist = E_hist / N
+            m_abs_hist = np.abs(M_hist)
+            
+            # Compute averages over time and replicas
+            # E_hist: (steps, replicas) -> flatten to compute moments
+            e_flat = e_hist.flatten()
+            m_flat = M_hist.flatten()
+            m_abs_flat = m_abs_hist.flatten()
+            
+            e_avg = np.mean(e_flat)
+            e2_avg = np.mean(e_flat**2)
+            
+            m_abs_avg = np.mean(m_abs_flat)
+            m2_avg = np.mean(m_flat**2)
+            m4_avg = np.mean(m_flat**4)
+            
+            # Critical Observables
+            cv = (beta**2) * N * (e2_avg - e_avg**2)
+            chi = beta * N * (m2_avg - m_abs_avg**2)
+            binder = 1.0 - (m4_avg / (3.0 * m2_avg**2))
+            
+            results_dict['data'][str(L)]['mag'].append(float(m_abs_avg))
+            results_dict['data'][str(L)]['chi'].append(float(chi))
+            results_dict['data'][str(L)]['cv'].append(float(cv))
+            results_dict['data'][str(L)]['binder'].append(float(binder))
+            
+            print(f"  beta={beta:.4f} | |m|={m_abs_avg:.4f} | chi={chi:.4f} | cv={cv:.4f} | U4={binder:.4f}")
+            
+        # Reverse lists to align with ascending betas array for JSON and plotting
+        results_dict['data'][str(L)]['mag'].reverse()
+        results_dict['data'][str(L)]['chi'].reverse()
+        results_dict['data'][str(L)]['cv'].reverse()
+        results_dict['data'][str(L)]['binder'].reverse()
+            
+    # Save results to JSON
+    with open('examples/ising_results.json', 'w') as f:
+        json.dump(results_dict, f, indent=4)
+        
+    print("\nSimulation complete. Plotting results...")
+    plot_results(results_dict)
 
-        simulation.sweep(
-            tracker=tracker,
-            beta=beta,
-            num_disturbances=num_flips,
-            sweep_length=sweep_length
-        )
 
-        beta_results = {}
-        for name, variable in tracker.history.items():
-            beta_results[name] = variable.numpy()
-        results[beta] = beta_results
-
-        # Calculate Magnetic Susceptibility using the final state
-        susceptibility = MagneticSusceptibility(
-            ising_system).compute().numpy()  # type: ignore
-        print(f"Susceptibility for beta={beta:.4f}: {susceptibility}")
-        susceptibility_results.append((beta, susceptibility, 0.0))
-
-    print("Plotting results...")
-
-    num_plots = len(betas)
-    cols = int(ceil(sqrt(num_plots)))
-    rows = int(ceil(num_plots / cols))
-
-    # Evolution Plots
-    fig, axes = plt.subplots(rows, cols, figsize=(4 * cols, 3 * rows))
-    axes_flat = axes.flatten()
-
-    # Color cycler
-    prop_cycle = plt.rcParams['axes.prop_cycle']
-    colors = prop_cycle.by_key()['color']
-
-    for i, beta in enumerate(betas):
-        ax = axes_flat[i]
-        mag_data = results[beta]['Magnetization']
-        steps = np.arange(mag_data.shape[0]) * granularity
-
-        # Plot each replica with a different color (cycling)
-        for r in range(min(5, lattice_replicas)):  # Plot first 5 replicas to avoid clutter
-            ax.plot(steps, mag_data[:, r], color=colors[r %
-                    len(colors)], alpha=0.4, linewidth=1)
-
-        mean_mag = np.mean(mag_data, axis=1)
-        ax.plot(steps, mean_mag, color='black', alpha=1.0,
-                linewidth=2, linestyle='--', label='Mean')
-
-        ax.set_title(f'Beta={beta:.3f}')
-        ax.set_xlabel('Step')
-        if i % cols == 0:
-            ax.set_ylabel('Magnetization')
-
-    # Hide unused subplots
-    for j in range(num_plots, len(axes_flat)):
-        axes_flat[j].axis('off')
-
+def plot_results(results_dict: Dict[str, Any]):
+    L_list = results_dict['L_list']
+    betas = np.array(results_dict['betas'])
+    data = results_dict['data']
+    beta_c_exact = 0.44068
+    
+    # ---------------------------------------------------------
+    # 1. Main Observables Plot
+    # ---------------------------------------------------------
+    fig, axs = plt.subplots(2, 2, figsize=(14, 10))
+    axs = axs.flatten()
+    
+    colors = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd']
+    
+    for i, L in enumerate(L_list):
+        L_str = str(L)
+        c = colors[i % len(colors)]
+        axs[0].plot(betas, data[L_str]['mag'], 'o-', color=c, label=f'L={L}')
+        axs[1].plot(betas, data[L_str]['chi'], 'o-', color=c, label=f'L={L}')
+        axs[2].plot(betas, data[L_str]['cv'], 'o-', color=c, label=f'L={L}')
+        axs[3].plot(betas, data[L_str]['binder'], 'o-', color=c, label=f'L={L}')
+        
+    for ax in axs:
+        ax.axvline(beta_c_exact, color='k', linestyle='--', alpha=0.5, label=r'$\beta_c$ exact')
+        ax.set_xlabel(r'$\beta$')
+        ax.grid(True, alpha=0.3)
+        ax.legend()
+        
+    axs[0].set_ylabel(r'$\langle |m| \rangle$')
+    axs[0].set_title('Absolute Magnetization')
+    
+    axs[1].set_ylabel(r'$\chi$')
+    axs[1].set_title('Magnetic Susceptibility')
+    
+    axs[2].set_ylabel(r'$C_v$')
+    axs[2].set_title('Specific Heat')
+    
+    axs[3].set_ylabel(r'$U_4$')
+    axs[3].set_title('Binder Cumulant')
+    
     plt.tight_layout()
-    plt.savefig('examples/ising_evolution.png')
-    print("Saved plot to examples/ising_evolution.png")
+    plt.savefig('examples/ising_observables.png')
+    print("Saved observables plot to examples/ising_observables.png")
+    
+    # ---------------------------------------------------------
+    # 2. Finite-Size Scaling Plot
+    # ---------------------------------------------------------
+    fig_fss, axs_fss = plt.subplots(1, 3, figsize=(18, 5))
+    
+    L_array = np.array(L_list)
+    chi_max = []
+    cv_max = []
+    m_tc = []
+    
+    # Find values for scaling
+    for L in L_list:
+        L_str = str(L)
+        # Find max chi
+        chi_max.append(np.max(data[L_str]['chi']))
+        # Find max cv
+        cv_max.append(np.max(data[L_str]['cv']))
+        
+        # Find m at Tc (interpolate if exact beta_c is not in array)
+        m_at_tc = np.interp(beta_c_exact, betas, data[L_str]['mag'])
+        m_tc.append(m_at_tc)
+        
+    chi_max = np.array(chi_max)
+    cv_max = np.array(cv_max)
+    m_tc = np.array(m_tc)
+    
+    # a) Susceptibility peak scaling: chi_max ~ L^(gamma/nu)  => expected slope = 1.75
+    axs_fss[0].plot(L_array, chi_max, 'ko-')
+    axs_fss[0].set_xscale('log')
+    axs_fss[0].set_yscale('log')
+    axs_fss[0].set_xlabel('L')
+    axs_fss[0].set_ylabel(r'$\chi_{max}$')
+    axs_fss[0].set_title(r'Susceptibility Scaling ($\gamma/\nu \approx 1.75$)')
+    axs_fss[0].grid(True, alpha=0.3, which="both", ls="--")
+    
+    # Linear fit in log-log
+    log_L = np.log(L_array)
+    log_chi = np.log(chi_max)
+    slope_chi, intercept_chi = np.polyfit(log_L, log_chi, 1)
+    axs_fss[0].plot(L_array, np.exp(intercept_chi)*L_array**slope_chi, 'r--', 
+                    label=f'Fit slope: {slope_chi:.3f}')
+    axs_fss[0].legend()
 
-    # Susceptibility Plot
-    plt.figure(figsize=(10, 6))
-    betas_np, chi_means, chi_stds = zip(*susceptibility_results)
+    # b) Magnetization scaling at Tc: m(Tc) ~ L^(-beta/nu) => expected slope = -0.125
+    axs_fss[1].plot(L_array, m_tc, 'ko-')
+    axs_fss[1].set_xscale('log')
+    axs_fss[1].set_yscale('log')
+    axs_fss[1].set_xlabel('L')
+    axs_fss[1].set_ylabel(r'$m(\beta_c)$')
+    axs_fss[1].set_title(r'Magnetization Scaling at $T_c$ ($-\beta/\nu \approx -0.125$)')
+    axs_fss[1].grid(True, alpha=0.3, which="both", ls="--")
+    
+    log_m = np.log(m_tc)
+    slope_m, intercept_m = np.polyfit(log_L, log_m, 1)
+    axs_fss[1].plot(L_array, np.exp(intercept_m)*L_array**slope_m, 'r--', 
+                    label=f'Fit slope: {slope_m:.3f}')
+    axs_fss[1].legend()
 
-    plt.errorbar(betas_np, chi_means, yerr=chi_stds, fmt='-o',
-                 color='purple', ecolor='gray', capsize=3)
-    plt.axvline(x=0.44068, color='green', linestyle='--',
-                label='Critical Beta (Onsager)')
-
-    plt.title('Magnetic Susceptibility vs Beta')
-    plt.xlabel('Inverse Temperature (Beta)')
-    # ignore typing for LaTeX inside ylabel
-    plt.ylabel('Susceptibility ($\chi$)')  # type: ignore
-    plt.legend()
-    plt.grid(True, alpha=0.3)
-
+    # c) Specific Heat scaling: C_v,max ~ ln(L) => semi-log plot
+    axs_fss[2].plot(np.log(L_array), cv_max, 'ko-')
+    axs_fss[2].set_xlabel(r'$\ln(L)$')
+    axs_fss[2].set_ylabel(r'$C_{v, max}$')
+    axs_fss[2].set_title(r'Specific Heat Scaling ($\alpha = 0$)')
+    axs_fss[2].grid(True, alpha=0.3)
+    
+    slope_cv, intercept_cv = np.polyfit(log_L, cv_max, 1)
+    axs_fss[2].plot(log_L, slope_cv*log_L + intercept_cv, 'r--', 
+                    label=f'Fit: {slope_cv:.3f} ln(L) + {intercept_cv:.3f}')
+    axs_fss[2].legend()
+    
     plt.tight_layout()
-    plt.savefig('examples/ising_susceptibility.png')
-    print("Saved plot to examples/ising_susceptibility.png")
+    plt.savefig('examples/ising_fss.png')
+    print("Saved finite-size scaling plot to examples/ising_fss.png")
 
 
 if __name__ == "__main__":

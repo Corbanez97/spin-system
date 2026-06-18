@@ -126,10 +126,12 @@ pip install -e ".[dev]"
 
 ### Running Examples
 ```bash
-python examples/ising.py       # 2D Ising phase transition sweep
-python examples/wegner.py      # Z₂ gauge theory annealing animation
-python examples/tsp.py         # TSP optimization
+venv/bin/python examples/ising.py       # 2D Ising phase transition sweep
+venv/bin/python examples/wegner.py      # Z₂ gauge theory annealing animation
+venv/bin/python examples/tsp.py         # TSP optimization
 ```
+
+> **AGENT ADDENDUM:** When executing scripts or running commands, AI agents MUST explicitly use the python interpreter from the virtual environment (e.g., `venv/bin/python` or `venv/bin/pytest`) instead of the global `python` command, as the global environment may lack required dependencies.
 
 ---
 
@@ -167,3 +169,16 @@ The project aims to explore two major frontiers:
 5. **Interaction matrices are not used by WegnerSystem.** Gauge models define their own coupling structure via plaquettes. Don't try to pass interaction matrices to gauge models.
 6. **Keep physics rigorous.** This is a research tool. Naming should follow established physics conventions (β for inverse temperature, J for couplings, H for Hamiltonian, etc.).
 7. **Tests are essential.** Any new feature should include corresponding tests in `tests/`. Cross-check against analytical results when available.
+
+---
+
+## Simulation Convergence & Best Practices
+
+When running scripts or executing phase transition sweeps, you MUST adhere to the following rules to ensure both computational efficiency and physical accuracy:
+
+1. **Static Graph Management**: Instantiate the physical `System`, the `Dynamics` simulator, and the `Tracker` **ONCE outside** the temperature/beta loop. Re-instantiating them inside the loop destroys state persistence and triggers catastrophic `@tf.function` recompilations.
+2. **Dynamic Sweep Scaling**: `sweep_length` represents individual spin flip proposals, not full lattice sweeps. To ensure equal equilibration, `sweep_length` must scale with lattice volume $N = L^D$. Always define `sweep_length = sweeps * N` (where `sweeps` $\ge 2000$).
+3. **Simulated Annealing & State Persistence**: The lattice state must transition continuously between temperatures to remain in thermodynamic equilibrium.
+   - **For Ferromagnets (Ising)**: Avoid Kibble-Zurek defect trapping by sweeping *cold-to-hot* (reverse $\beta$ loop: start at $\beta_{max}$ with `initial_magnetization=1.0`).
+   - **For Spin Glasses (Edwards-Anderson)**: Traverse the rugged energy landscape via standard simulated annealing *hot-to-cold* (ascending $\beta$ loop: start at $\beta_{min}$ with `initial_magnetization=0.0`).
+4. **Lower Critical Dimensions ($d_l$)**: Ensure the simulation geometry supports the expected phase transition. For example, the **Edwards-Anderson Spin Glass** only exhibits a finite-temperature phase transition ($T_c > 0$) in $3D$ or higher. In $2D$, the transition occurs strictly at $T=0$, meaning observables will only grow monotonically without a finite-$T$ peak.
