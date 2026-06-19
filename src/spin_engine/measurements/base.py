@@ -27,7 +27,7 @@ class Measurement(ABC):
         1. system: arg > self.system
         2. spin_state: arg > resolved_system.spin_state
         """
-        eff_sys = system or self.system
+        eff_sys = system if system is not None else self.system
 
         eff_state = spin_state
         if eff_state is None:

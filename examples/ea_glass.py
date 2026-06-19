@@ -253,11 +253,11 @@ def plot_ea_results(
 
 def main():
     # Concentration of β near expected 3D transition (Tc ≈ 1.1 => beta_c ≈ 0.909)
-    betas = generate_betas(num_betas=25, critical_beta=0.909, min_beta=0.2, max_beta=2.5)
+    betas = generate_betas(num_betas=10, critical_beta=0.909, min_beta=0.2, max_beta=2.5)
     J = 1.0
     D = 3
 
-    lengths = [4, 8, 16, 32]
+    lengths = [4, 8, 16]
     N_per_length = {L: L**D for L in lengths}
     all_results: dict[int, dict] = {}
 

@@ -12,27 +12,27 @@
 - **GPU**: NVIDIA GeForce RTX 4060 Laptop GPU (8GB VRAM, compute capability 8.9)
 - **Framework**: TensorFlow with `@tf.function` graph compilation and `tf.while_loop`
 
-### Benchmark Results (Unoptimized vs Vectorized vs Incremental $\Delta E$)
+### Benchmark Results (Unoptimized vs Vectorized vs Incremental $\Delta E$ vs XLA)
 A benchmark was run using `examples/benchmark_lite.py` tracking the progression of optimizations:
 
-| Test Case | Unoptimized | Vectorized Indices | Incremental $\Delta E$ (O(1)) | Speedup (vs Unoptimized) |
-|---|---|---|---|---|
-| **Ising 2D L=8 ($N=64$)** | 168 steps/s | 209 steps/s | **708 steps/s** | **4.2x** |
-| **Ising 2D L=16 ($N=256$)** | 171 steps/s | 344 steps/s | **814 steps/s** | **4.8x** |
-| **Ising 2D L=32 ($N=1024$)** | 178 steps/s | 350 steps/s | **866 steps/s** | **4.9x** |
-| **EA 3D L=4 ($N=64$)** | 146 steps/s | 201 steps/s | **889 steps/s** | **6.1x** |
-| **EA 3D L=6 ($N=216$)** | 161 steps/s | 498 steps/s | **908 steps/s** | **5.6x** |
-| **EA 3D L=8 ($N=512$)** | 177 steps/s | 546 steps/s | **974 steps/s** | **5.5x** |
+| Test Case | Unoptimized | Vectorized Indices | Incremental $\Delta E$ (O(1)) | XLA + Delta E | Speedup (vs Unoptimized) |
+|---|---|---|---|---|---|
+| **Ising 2D L=8 ($N=64$)** | 168 steps/s | 209 steps/s | 708 steps/s | **9,316 steps/s** | **55.5x** |
+| **Ising 2D L=16 ($N=256$)** | 171 steps/s | 344 steps/s | 814 steps/s | **7,850 steps/s** | **45.9x** |
+| **Ising 2D L=32 ($N=1024$)** | 178 steps/s | 350 steps/s | 866 steps/s | **7,164 steps/s** | **40.2x** |
+| **EA 3D L=4 ($N=64$)** | 146 steps/s | 201 steps/s | 889 steps/s | **7,987 steps/s** | **54.7x** |
+| **EA 3D L=6 ($N=216$)** | 161 steps/s | 498 steps/s | 908 steps/s | **6,711 steps/s** | **41.7x** |
+| **EA 3D L=8 ($N=512$)** | 177 steps/s | 546 steps/s | 974 steps/s | **8,243 steps/s** | **46.6x** |
 
 ### Projected Runtimes for Example Scripts
 
-| Example Script | Unoptimized (Python Loop) | Vectorized Index Gen | **Incremental $\Delta E$ (Now)** |
-|---|---|---|---|
-| **`examples/ea_observables.py`** (L={4,6}, 5 betas) | ~8.0 hours | ~3.6 hours | **~1.4 hours** (83 min) |
-| **`examples/ea_glass.py`** (L={4,8}, 25 betas) | ~115.6 hours | ~43.6 hours | **~20.8 hours** (1245 min) |
-| **`examples/ising.py`** (L={8,16,32}, 25 betas) | ~41.8 hours | ~22.9 hours | **~8.8 hours** (530 min) |
+| Example Script | Unoptimized (Python Loop) | Vectorized Index Gen | Incremental $\Delta E$ | **XLA + Delta E (Now)** |
+|---|---|---|---|---|
+| **`examples/ea_observables.py`** (L={4,6}, 5 betas) | ~8.0 hours | ~3.6 hours | ~1.4 hours (83 min) | **~10.7 min** |
+| **`examples/ea_glass.py`** (L={4,8}, 25 betas) | ~115.6 hours | ~43.6 hours | ~20.8 hours (1245 min) | **~2.44 hours** (146 min) |
+| **`examples/ising.py`** (L={8,16,32}, 25 betas) | ~41.8 hours | ~22.9 hours | ~8.8 hours (530 min) | **~57.5 min** |
 
-**Key takeaway**: By removing the $O(N^2)$ energy recomputations and replacing them with local neighborhood updates ($O(D)$), the cost per Monte Carlo step is completely decoupled from the system volume $N$. Simulated annealing of large 3D spin glasses can now complete overnight rather than taking 5 days!
+**Key takeaway**: By removing the $O(N^2)$ energy recomputations, replacing them with local neighborhood updates ($O(D)$), and enabling full XLA JIT compilation over the dynamics loop, the cost per Monte Carlo step is completely decoupled from the system volume $N$. Simulated annealing of large 3D spin glasses can now complete in hours/minutes rather than taking days/weeks!
 
 ---
 
