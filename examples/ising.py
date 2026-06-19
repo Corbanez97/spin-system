@@ -31,7 +31,8 @@ def generate_betas(num_betas: int = 25, critical_beta: float = 0.44068) -> List[
 
 def run_simulation():
     # Simulation Parameters
-    L_list = [8, 16, 32]
+    # REMOVING L=64 will take our simulation from 12.6 hours to 3.8 hours
+    L_list = [4, 6, 8, 10, 16, 24, 32]#, 64]
     lattice_replicas = 64
     betas = generate_betas(25)
     
@@ -56,12 +57,8 @@ def run_simulation():
         interaction_matrix = PeriodicNearestNeighborInteraction().generate(2, L)
         
         # Define sweep length dynamically based on system size L to ensure proper equilibration
-        if L == 8:
-            sweep_length = 150000
-        elif L == 16:
-            sweep_length = 300000
-        else: # L == 32
-            sweep_length = 600000
+        sweeps = 2000
+        sweep_length = sweeps * N
             
         burn_in_steps = int((sweep_length / granularity) * 0.2)
         
@@ -143,27 +140,41 @@ def plot_results(results_dict: Dict[str, Any]):
     data = results_dict['data']
     beta_c_exact = 0.44068
     
+    # Set premium publication-quality style parameters
+    plt.rcParams.update({
+        'font.size': 11,
+        'axes.labelsize': 12,
+        'axes.titlesize': 13,
+        'xtick.labelsize': 10,
+        'ytick.labelsize': 10,
+        'figure.titlesize': 15,
+        'legend.fontsize': 10,
+        'axes.grid': True,
+        'grid.alpha': 0.3,
+        'grid.linestyle': '--'
+    })
+    
+    # Using a perceptually uniform colormap to represent size scale
+    cmap = plt.get_cmap('viridis')
+    colors = [cmap(i) for i in np.linspace(0.1, 0.9, len(L_list))]
+    
     # ---------------------------------------------------------
-    # 1. Main Observables Plot
+    # 1. Main Observables Plot (Cleaned)
     # ---------------------------------------------------------
-    fig, axs = plt.subplots(2, 2, figsize=(14, 10))
+    fig, axs = plt.subplots(2, 2, figsize=(12, 9), sharex=True)
     axs = axs.flatten()
     
-    colors = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd']
-    
-    for i, L in enumerate(L_list):
+    for idx, L in enumerate(L_list):
         L_str = str(L)
-        c = colors[i % len(colors)]
-        axs[0].plot(betas, data[L_str]['mag'], 'o-', color=c, label=f'L={L}')
-        axs[1].plot(betas, data[L_str]['chi'], 'o-', color=c, label=f'L={L}')
-        axs[2].plot(betas, data[L_str]['cv'], 'o-', color=c, label=f'L={L}')
-        axs[3].plot(betas, data[L_str]['binder'], 'o-', color=c, label=f'L={L}')
+        color = colors[idx]
+        axs[0].plot(betas, data[L_str]['mag'], 'o-', color=color, markersize=3, linewidth=1, label=f'L={L}')
+        axs[1].plot(betas, data[L_str]['chi'], 'o-', color=color, markersize=3, linewidth=1, label=f'L={L}')
+        axs[2].plot(betas, data[L_str]['cv'], 'o-', color=color, markersize=3, linewidth=1, label=f'L={L}')
+        axs[3].plot(betas, data[L_str]['binder'], 'o-', color=color, markersize=3, linewidth=1, label=f'L={L}')
         
     for ax in axs:
-        ax.axvline(beta_c_exact, color='k', linestyle='--', alpha=0.5, label=r'$\beta_c$ exact')
-        ax.set_xlabel(r'$\beta$')
-        ax.grid(True, alpha=0.3)
-        ax.legend()
+        ax.axvline(beta_c_exact, color='crimson', linestyle=':', linewidth=1.5, alpha=0.8, label=r'$\beta_c$ exact')
+        ax.set_xlim(0.1, 0.8)
         
     axs[0].set_ylabel(r'$\langle |m| \rangle$')
     axs[0].set_title('Absolute Magnetization')
@@ -173,18 +184,32 @@ def plot_results(results_dict: Dict[str, Any]):
     
     axs[2].set_ylabel(r'$C_v$')
     axs[2].set_title('Specific Heat')
+    axs[2].set_xlabel(r'$\beta$')
     
     axs[3].set_ylabel(r'$U_4$')
     axs[3].set_title('Binder Cumulant')
+    axs[3].set_xlabel(r'$\beta$')
     
+    # Single unified legend to avoid crowding
+    handles, labels = axs[0].get_legend_handles_labels()
+    unique_labels = {}
+    for h, l in zip(handles, labels):
+        if l not in unique_labels:
+            unique_labels[l] = h
+    fig.legend(unique_labels.values(), unique_labels.keys(), loc='center right', bbox_to_anchor=(1.12, 0.5), borderaxespad=0.)
+    
+    plt.suptitle('2D Ising Model Observables', y=0.98, weight='bold')
     plt.tight_layout()
-    plt.savefig('examples/ising_observables.png')
-    print("Saved observables plot to examples/ising_observables.png")
+    plt.subplots_adjust(right=0.88)
+    
+    plt.savefig('examples/ising_observables_delta_e.png', dpi=300, bbox_inches='tight')
+    print("Saved clean observables plot to examples/ising_observables_delta_e.png")
+    plt.close()
     
     # ---------------------------------------------------------
     # 2. Finite-Size Scaling Plot
     # ---------------------------------------------------------
-    fig_fss, axs_fss = plt.subplots(1, 3, figsize=(18, 5))
+    fig_fss, axs_fss = plt.subplots(1, 3, figsize=(16, 5))
     
     L_array = np.array(L_list)
     chi_max = []
@@ -194,21 +219,18 @@ def plot_results(results_dict: Dict[str, Any]):
     # Find values for scaling
     for L in L_list:
         L_str = str(L)
-        # Find max chi
         chi_max.append(np.max(data[L_str]['chi']))
-        # Find max cv
         cv_max.append(np.max(data[L_str]['cv']))
-        
-        # Find m at Tc (interpolate if exact beta_c is not in array)
         m_at_tc = np.interp(beta_c_exact, betas, data[L_str]['mag'])
         m_tc.append(m_at_tc)
         
     chi_max = np.array(chi_max)
     cv_max = np.array(cv_max)
     m_tc = np.array(m_tc)
+    log_L = np.log(L_array)
     
     # a) Susceptibility peak scaling: chi_max ~ L^(gamma/nu)  => expected slope = 1.75
-    axs_fss[0].plot(L_array, chi_max, 'ko-')
+    axs_fss[0].plot(L_array, chi_max, 'ko', markersize=6, label='Data')
     axs_fss[0].set_xscale('log')
     axs_fss[0].set_yscale('log')
     axs_fss[0].set_xlabel('L')
@@ -216,16 +238,13 @@ def plot_results(results_dict: Dict[str, Any]):
     axs_fss[0].set_title(r'Susceptibility Scaling ($\gamma/\nu \approx 1.75$)')
     axs_fss[0].grid(True, alpha=0.3, which="both", ls="--")
     
-    # Linear fit in log-log
-    log_L = np.log(L_array)
-    log_chi = np.log(chi_max)
-    slope_chi, intercept_chi = np.polyfit(log_L, log_chi, 1)
+    slope_chi, intercept_chi = np.polyfit(log_L, np.log(chi_max), 1)
     axs_fss[0].plot(L_array, np.exp(intercept_chi)*L_array**slope_chi, 'r--', 
                     label=f'Fit slope: {slope_chi:.3f}')
     axs_fss[0].legend()
-
+ 
     # b) Magnetization scaling at Tc: m(Tc) ~ L^(-beta/nu) => expected slope = -0.125
-    axs_fss[1].plot(L_array, m_tc, 'ko-')
+    axs_fss[1].plot(L_array, m_tc, 'ko', markersize=6, label='Data')
     axs_fss[1].set_xscale('log')
     axs_fss[1].set_yscale('log')
     axs_fss[1].set_xlabel('L')
@@ -238,9 +257,9 @@ def plot_results(results_dict: Dict[str, Any]):
     axs_fss[1].plot(L_array, np.exp(intercept_m)*L_array**slope_m, 'r--', 
                     label=f'Fit slope: {slope_m:.3f}')
     axs_fss[1].legend()
-
+ 
     # c) Specific Heat scaling: C_v,max ~ ln(L) => semi-log plot
-    axs_fss[2].plot(np.log(L_array), cv_max, 'ko-')
+    axs_fss[2].plot(log_L, cv_max, 'ko', markersize=6, label='Data')
     axs_fss[2].set_xlabel(r'$\ln(L)$')
     axs_fss[2].set_ylabel(r'$C_{v, max}$')
     axs_fss[2].set_title(r'Specific Heat Scaling ($\alpha = 0$)')
@@ -251,9 +270,60 @@ def plot_results(results_dict: Dict[str, Any]):
                     label=f'Fit: {slope_cv:.3f} ln(L) + {intercept_cv:.3f}')
     axs_fss[2].legend()
     
+    plt.suptitle('2D Ising Finite-Size Scaling fits', y=0.98, weight='bold')
     plt.tight_layout()
-    plt.savefig('examples/ising_fss.png')
-    print("Saved finite-size scaling plot to examples/ising_fss.png")
+    plt.savefig('examples/ising_fss_delta_e.png', dpi=300)
+    print("Saved finite-size scaling plot to examples/ising_fss_delta_e.png")
+    plt.close()
+
+    # ---------------------------------------------------------
+    # 3. Data Collapse Plot
+    # ---------------------------------------------------------
+    beta_val = 0.125  # beta = 1/8
+    gamma_val = 1.75  # gamma = 7/4
+    nu_val = 1.0      # nu = 1
+    
+    fig_col, axs_col = plt.subplots(1, 3, figsize=(16, 5))
+    
+    for idx, L in enumerate(L_list):
+        L_str = str(L)
+        color = colors[idx]
+        mag = np.array(data[L_str]['mag'])
+        chi = np.array(data[L_str]['chi'])
+        t_scaled = (betas - beta_c_exact) * (L ** (1.0 / nu_val))
+        
+        mag_scaled = mag * (L ** (beta_val / nu_val))
+        chi_scaled = chi * (L ** (-gamma_val / nu_val))
+        
+        axs_col[0].plot(t_scaled, mag_scaled, 'o-', color=color, markersize=3.5, linewidth=1, label=f'L={L}')
+        axs_col[1].plot(t_scaled, chi_scaled, 'o-', color=color, markersize=3.5, linewidth=1, label=f'L={L}')
+        axs_col[2].plot(t_scaled, data[L_str]['binder'], 'o-', color=color, markersize=3.5, linewidth=1, label=f'L={L}')
+        
+    x_limit = 4.0
+    for ax in axs_col:
+        ax.axvline(0.0, color='gray', linestyle=':', linewidth=1.2)
+        ax.set_xlim(-x_limit, x_limit)
+        ax.set_xlabel(r'$(\beta - \beta_c) L^{1/\nu}$')
+        
+    axs_col[0].set_ylabel(r'$\langle |m| \rangle L^{\beta/\nu}$')
+    axs_col[0].set_title('Magnetization Collapse')
+    
+    axs_col[1].set_ylabel(r'$\chi L^{-\gamma/\nu}$')
+    axs_col[1].set_title('Susceptibility Collapse')
+    
+    axs_col[2].set_ylabel(r'$U_4$')
+    axs_col[2].set_title('Binder Cumulant Collapse')
+    
+    handles, labels = axs_col[0].get_legend_handles_labels()
+    fig_col.legend(handles, labels, loc='center right', bbox_to_anchor=(1.08, 0.5))
+    
+    plt.suptitle('2D Ising Finite-Size Scaling Data Collapse', y=0.98, weight='bold')
+    plt.tight_layout()
+    plt.subplots_adjust(right=0.92)
+    
+    plt.savefig('examples/ising_data_collapse.png', dpi=300, bbox_inches='tight')
+    print("Saved FSS data collapse plot to examples/ising_data_collapse.png")
+    plt.close()
 
 
 if __name__ == "__main__":
