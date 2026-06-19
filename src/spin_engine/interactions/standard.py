@@ -87,3 +87,33 @@ class GaussianInteraction(Interaction):
         J_tensor = J_flat.reshape(tensor_shape)
 
         return J_tensor
+
+
+class BinaryRandomInteraction(Interaction):
+    """
+    Generates a purely binary random interaction matrix for spin glass models.
+    Couplings are drawn uniformly from {-J, +J} with a strictly zero diagonal,
+    forming a symmetric matrix.
+
+    Args:
+        J (float, optional): The coupling strength magnitude. Defaults to 1.0.
+        seed (Optional[int], optional): Random seed for reproducibility. Defaults to None.
+    """
+    def __init__(self, J: float = 1.0, seed: Optional[int] = None):
+        self.J = J
+        self.seed = seed
+
+    def generate(self, D: int, L: int) -> np.ndarray:
+        if self.seed is not None:
+            np.random.seed(self.seed)
+
+        N = L**D
+        J_flat = np.random.choice([-self.J, self.J], size=(N, N))
+
+        upper = np.triu(J_flat, 1)
+        J_flat = upper + upper.T
+
+        tensor_shape = (L,) * D * 2
+        J_tensor = J_flat.reshape(tensor_shape)
+
+        return J_tensor

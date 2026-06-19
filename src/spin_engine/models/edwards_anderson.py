@@ -4,22 +4,36 @@ from typing import Optional, Union, Callable
 from .base import BaseSpinSystem
 
 
-class IsingSystem(BaseSpinSystem):
+class EdwardsAndersonSystem(BaseSpinSystem):
+    """
+    Edwards-Anderson Model for Spin Glass Systems.
+    
+    This model implements discrete Ising spins ({-1, 1}) on a d-dimensional lattice
+    with quenched random couplings (J_ij). The energy computation handles an arbitrary 
+    interaction matrix, which represents the disorder and frustration inherent in 
+    spin glass systems.
+    
+    Args:
+        lattice_length (int): The size of each dimension in the lattice.
+        lattice_replicas (int): The number of independent replicas to simulate in parallel.
+        interaction_matrix (Union[tf.Tensor, np.ndarray]): The specific coupling matrix (J_ij)
+            dictating the interaction strength between spins.
+        initial_magnetization (float, optional): Sets the probability of spins initializing to +1.
+            Defaults to 0.5 (random initialization).
+        lattice_dim (int, optional): Number of spatial dimensions. Defaults to 2.
+        initial_spin_state (Optional[Union[tf.Tensor, Callable[[], tf.Tensor]]], optional):
+            Pre-defined spin states to initialize with. Defaults to None.
+    """
     def __init__(
         self,
         lattice_length: int,
         lattice_replicas: int,
         interaction_matrix: Union[tf.Tensor, np.ndarray],
-        external_field: Optional[Union[tf.Tensor, np.ndarray]] = None,
         initial_magnetization: float = 0.5,
         lattice_dim: int = 2,
-        initial_spin_state: Optional[Union[tf.Tensor,
-                                           Callable[[], tf.Tensor]]] = None,
+        initial_spin_state: Optional[Union[tf.Tensor, Callable[[], tf.Tensor]]] = None,
     ):
         self.initial_magnetization = initial_magnetization
-
-        # Validate/Store interaction matrix and field BEFORE calling super().__init__
-        # because initialize_state might rely on them (though here it only uses magnetization)
 
         super().__init__(
             lattice_dim=lattice_dim,
@@ -32,14 +46,6 @@ class IsingSystem(BaseSpinSystem):
             interaction_matrix,
             expected_shape=tuple(self.shape + self.shape),
             name="Interaction matrix",
-        )
-
-        self.external_field = self._validate_tensor_shape(
-            external_field,
-            expected_shape=tuple(self.shape),
-            name="External field",
-            allow_none=True,
-            default=tf.zeros(self.shape, dtype=tf.float32),
         )
 
     def initialize_state(self) -> tf.Tensor:
@@ -70,18 +76,13 @@ class IsingSystem(BaseSpinSystem):
             self.interaction_matrix, (self.number_spins, self.number_spins)
         )
 
-        # Flatten field: (1, N) -> elementwise multiply broadcasts over replicas
-        external_field_flat = tf.reshape(self.external_field, (1, -1))
-
-        # E = -0.5 * S^T J S - h S
+        # E = -0.5 * S^T J S
         # Compute h_local = S @ J  --> shape (replicas, N)
         h_local = tf.matmul(spin_state_flat, interaction_matrix_flat)
 
         pairwise = -0.5 * tf.reduce_sum(spin_state_flat * h_local, axis=1)
-        field_term = -tf.reduce_sum(spin_state_flat *
-                                    external_field_flat, axis=1)
 
-        return pairwise + field_term
+        return pairwise
 
     def compute_delta_energy(
         self,
@@ -90,16 +91,13 @@ class IsingSystem(BaseSpinSystem):
         changed_indices: tf.Tensor,
     ) -> tf.Tensor:
         """
-        Efficient ΔE for Ising spin flips.
+        Efficient ΔE for Edwards-Anderson spin flips.
 
-        For Ising flips at sites D with Δσ_n = -2σ_n:
-            ΔE = 2 Σ_k σ_{n_k} (h_{n_k} + h^ext_{n_k})
+        Same formula as Ising but without external field:
+            ΔE = 2 Σ_k σ_{n_k} h_{n_k}
                  - 2 Σ_{i,j∈D} J_{ij} σ_i σ_j   (cross-term for multi-flip)
 
         For single-site flips (num_flips=1), the cross-term vanishes (J_nn=0).
-
-        Complexity: O(replicas × num_flips × N) — reads num_flips rows of J.
-        Compare to compute_energy: O(replicas × N²).
 
         Args:
             spin_state: Current spin state, shape (replicas, L, ..., L).
@@ -118,36 +116,28 @@ class IsingSystem(BaseSpinSystem):
         # Flatten J: (N, N)
         J_flat = tf.reshape(self.interaction_matrix, (N, N))
 
-        # Gather J rows for all flipped sites across all replicas
-        # Indices may differ per replica, so we flatten and reshape
-        flat_idx = tf.reshape(changed_indices, [-1])              # (replicas * num_flips,)
-        J_rows = tf.gather(J_flat, flat_idx)                      # (replicas * num_flips, N)
+        # Gather J rows for flipped sites
+        flat_idx = tf.reshape(changed_indices, [-1])
+        J_rows = tf.gather(J_flat, flat_idx)
         J_rows = tf.reshape(J_rows, (self.lattice_replicas, num_flips, N))
 
-        # Local fields h_n = Σ_j J_{nj} σ_j for each flipped site
-        # spin_flat: (replicas, N) → (replicas, 1, N) for broadcasting
+        # Local fields h_n = Σ_j J_{nj} σ_j
         h_local = tf.reduce_sum(
             J_rows * spin_flat[:, tf.newaxis, :], axis=-1
         )  # (replicas, num_flips)
 
-        # Spin values at flipped sites: (replicas, num_flips)
+        # Spin values at flipped sites
         s_flipped = tf.gather(spin_flat, changed_indices, batch_dims=1)
 
-        # External field at flipped sites
-        field_flat = tf.reshape(self.external_field, [-1])        # (N,)
-        h_ext_flipped = tf.gather(field_flat, flat_idx)           # (replicas * num_flips,)
-        h_ext_flipped = tf.reshape(h_ext_flipped, (self.lattice_replicas, num_flips))
-
-        # Term 1: Σ_k 2 * σ_{n_k} * (h_{n_k} + h^ext_{n_k})
+        # Term 1: Σ_k 2 * σ_{n_k} * h_{n_k}
         term1 = tf.reduce_sum(
-            2.0 * s_flipped * (h_local + h_ext_flipped), axis=-1
+            2.0 * s_flipped * h_local, axis=-1
         )  # (replicas,)
 
         # Term 2: Cross-term for multi-site flips
         # -½ Σ_{i,j∈D} J_ij Δσ_i Δσ_j where Δσ = -2σ
-        # = -½ Σ_{i,j∈D} J_ij (-2σ_i)(-2σ_j) = -2 Σ_{i,j∈D} J_ij σ_i σ_j
-        # For single flips J_nn=0, so this vanishes automatically.
-        J_sub = tf.gather(J_rows, changed_indices, batch_dims=1, axis=2)  # (replicas, num_flips, num_flips)
+        # = -2 Σ_{i,j∈D} J_ij σ_i σ_j
+        J_sub = tf.gather(J_rows, changed_indices, batch_dims=1, axis=2)
         term2 = -2.0 * tf.reduce_sum(
             s_flipped[:, :, tf.newaxis] * J_sub * s_flipped[:, tf.newaxis, :],
             axis=[-2, -1]

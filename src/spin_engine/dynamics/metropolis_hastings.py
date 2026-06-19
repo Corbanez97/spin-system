@@ -1,7 +1,7 @@
 import tensorflow as tf
 from .base import Dynamics
 
-from typing import Optional, TYPE_CHECKING, Tuple, cast
+from typing import Optional, TYPE_CHECKING, Tuple, cast, Dict
 
 if TYPE_CHECKING:
     from spin_engine.models.base import BaseSpinSystem
@@ -21,16 +21,16 @@ class MetropolisHastings(Dynamics):
 
     def flip_spins(self, num_flips: tf.Tensor) -> Tuple[tf.Tensor, tf.Tensor]:
         """
-        Flip n spins 
+        Flip n spins and compute the energy change efficiently using ΔE.
         """
         spin_flat = tf.reshape(self.system.spin_state,
                                (self.system.lattice_replicas, -1))
 
-        idx = tf.stack([
-            tf.random.shuffle(tf.range(self.system.number_spins, dtype=tf.int32))[
-                :num_flips]
-            for _ in range(self.system.lattice_replicas)
-        ], axis=0)
+        idx = tf.random.uniform(
+            shape=(self.system.lattice_replicas, num_flips),
+            maxval=tf.cast(self.system.number_spins, tf.int32),
+            dtype=tf.int32
+        )
         replica_idx = tf.repeat(tf.range(self.system.lattice_replicas)[
                                 :, None], num_flips, axis=1)
         scatter_indices = tf.stack([replica_idx, idx], axis=-1)
@@ -45,7 +45,10 @@ class MetropolisHastings(Dynamics):
             spin_flat, scatter_indices, updates)
         updated = tf.reshape(updated, self.system.spin_state.shape)
 
-        updated_energy = self.system.compute_energy(updated)
+        # Use incremental ΔE instead of full energy recomputation
+        delta_energy = self.system.compute_delta_energy(
+            self.system.spin_state, updated, idx)
+        updated_energy = self.current_energy + delta_energy
 
         return updated, updated_energy
 
@@ -98,40 +101,54 @@ class MetropolisHastings(Dynamics):
 
     # TODO: Fix typing errors here...
 
-    @tf.function
     def sweep(
         self,
         tracker: 'Tracker',
         beta: float,
         sweep_length: int,
-        num_disturbances:  tf.Tensor = cast(tf.Tensor, 1),
-        theta_max: Optional[tf.Tensor] = None,
+        num_disturbances: Optional[tf.Tensor] = None,
+        theta_max: Optional[tf.Tensor] = None
     ) -> None:
-        """
-        The orchestrator of multiple steps of the simulation.
-        """
-        tracking_arrays = tracker.init_run(cast(tf.Tensor, sweep_length))
+        if num_disturbances is None:
+            num_disturbances = tf.cast(
+                self.system.number_spins, dtype=tf.int32)
 
-        tracking_arrays = tracker.track(
-            cast(tf.Tensor, 0), self.system, tracking_arrays)
+        # Call the compiled inner loop that now manages the TensorArrays internally
+        final_stacked_tensors = self._run_sweep_loop(
+            tracker, beta, sweep_length, num_disturbances, theta_max
+        )
 
-        def body(i, tracking_arrays):
-            _ = self.step(beta, cast(tf.Tensor, num_disturbances), theta_max)
+        tracker.finalize(final_stacked_tensors)
 
-            current_step = i + 1
-            new_arrays = tracker.track(
-                current_step, self.system, tracking_arrays)
+    @tf.function(jit_compile=True)
+    def _run_sweep_loop(
+        self,
+        tracker: 'Tracker',
+        beta: float,
+        sweep_length: int,
+        num_disturbances: tf.Tensor,
+        theta_max: Optional[tf.Tensor]
+    ) -> Tuple[tf.Tensor, ...]:
+        
+        tracking_arrays = tracker.init_run(tf.cast(sweep_length, tf.float32))
 
-            return i + 1, new_arrays
+        tracking_arrays = tracker.track_initial(self.system, tracking_arrays)
 
-        i0 = tf.constant(0, dtype=tf.int32)
-        loop_result = tf.while_loop(
-            cond=lambda i, _: i < sweep_length,
-            body=body,
+        i0 = tf.constant(1)
+
+        def condition(i, arrays):
+            return i <= sweep_length
+
+        def body(i, arrays):
+            self.step(beta=beta, num_disturbances=num_disturbances,
+                      theta_max=theta_max)
+            arrays = tracker.track(i, self.system, arrays)
+            return i + 1, arrays
+
+        _, final_arrays = tf.while_loop(
+            condition,
+            body,
             loop_vars=[i0, tracking_arrays]
         )
 
-        final_arrays = cast(Tuple, loop_result)[1]
-        tracker.finalize(final_arrays)
-
-        return None
+        return tuple(arr.stack() for arr in final_arrays)

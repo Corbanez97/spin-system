@@ -3,7 +3,7 @@ import tensorflow as tf
 import numpy as np
 from spin_engine.models.ising import IsingSystem
 from spin_engine.models.spherical import SphericalSystem
-from spin_engine.models.z2_gauge import Z2GaugeSystem
+from spin_engine.models.wegner import WegnerSystem
 import sys
 import os
 
@@ -70,17 +70,16 @@ class TestModels:
 
         assert np.allclose(norm_sq.numpy(), expected_norm, atol=1e-4)
 
-    def test_z2_placeholder(self):
-        # Should raise NotImplementedError on init or strict usage?
-        # We implemented it to pass init but fail on methods
-        system = Z2GaugeSystem(
-            lattice_dim=2, lattice_length=10, lattice_replicas=1)
+    def test_wegner_system(self):
+        # WegnerSystem is now implemented, test initialization and energy compute
+        system = WegnerSystem(
+            lattice_dim=2, lattice_length=4, lattice_replicas=2)
 
-        with pytest.raises(NotImplementedError):
-            system.initialize_state()
-
-        with pytest.raises(NotImplementedError):
-            system.compute_energy()
+        state = system.spin_state
+        assert state.shape == (2, 4, 4, 2)  # R, L, L, D
+        
+        energy = system.compute_energy()
+        assert energy.shape == (2,)
 
     @pytest.mark.parametrize("dim", [1, 2, 3])
     def test_spherical_constraint_nd(self, dim):

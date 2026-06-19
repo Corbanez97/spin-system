@@ -374,11 +374,11 @@ class SpinSystem(tf.Module):
             spin_flat = tf.reshape(
                 self.spin_state, (self.lattice_replicas, -1))
 
-        idx = tf.stack([
-            tf.random.shuffle(tf.range(self.number_spins, dtype=tf.int32))[
-                :num_flips]
-            for _ in range(self.lattice_replicas)
-        ], axis=0)
+        idx = tf.random.uniform(
+            shape=(self.lattice_replicas, num_flips),
+            maxval=tf.cast(self.number_spins, tf.int32),
+            dtype=tf.int32
+        )
         replica_idx = tf.repeat(tf.range(self.lattice_replicas)[
                                 :, None], num_flips, axis=1)
         scatter_indices = tf.stack([replica_idx, idx], axis=-1)

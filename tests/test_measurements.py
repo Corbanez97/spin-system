@@ -1,7 +1,7 @@
 from spin_engine.measurements import (
     Energy, Magnetization, MagneticSusceptibility, OverlapMatrix
 )
-from spin_engine.models.z2_gauge import Z2GaugeSystem
+from spin_engine.models.wegner import WegnerSystem
 from spin_engine.models.spherical import SphericalSystem
 from spin_engine.models.ising import IsingSystem
 from spin_engine.interactions import (

@@ -30,7 +30,7 @@ class TestTracker:
         assert len(arrays) == 2
         # Size should be sweep_length // granularity + 1
         expected_size = cast(tf.Tensor, 11)
-        for array in arrays.values():
+        for array in arrays:
             assert array.size() == expected_size
 
     def test_track_granularity(self):
@@ -54,7 +54,7 @@ class TestTracker:
         system = MockSystem(0, 0, 0)
 
         # Track step 0 (should write)
-        arrays = tracker.track(cast(tf.Tensor, 0), system, arrays)
+        arrays = tracker.track_initial(system, arrays)
         # Track step 1 (should NOT write)
         arrays = tracker.track(cast(tf.Tensor, 1), system, arrays)
         # Track step 5 (should write)
@@ -94,7 +94,7 @@ class TestTracker:
                 return tf.zeros((1))
 
         system = MockSystem(0, 0, 0)
-        arrays = tracker.track(cast(tf.Tensor, 0), system, arrays)
+        arrays = tracker.track_initial(system, arrays)
         arrays = tracker.track(cast(tf.Tensor, 1), system, arrays)
         arrays = tracker.track(cast(tf.Tensor, 2), system, arrays)
 
