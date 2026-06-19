@@ -86,14 +86,14 @@ The script `examples/ising.py` performs a temperature sweep on a two-dimensional
 
 ![Ising Evolution](examples/images/ising_evolution.png)
 
-#### Magnetic Susceptibility
+#### Critical Exponents
 - The simulation reproduces the expected critical behavior of the 2D Ising model.
-- A peak in susceptibility is observed near the critical inverse temperature:
+- A peak in susceptibility and other parameters is observed near the critical inverse temperature:
   $$
   \beta_c \approx 0.44
   $$
 
-![Ising Susceptibility](examples/images/ising_susceptibility.png)
+![Ising Susceptibility](examples/images/ising_observables_clean.png)
 
 
 

@@ -76,7 +76,7 @@ def run_ea_sweep(
     betas: list[float],
     lattice_replicas: int = 64,
     J: float = 1.0,
-    sweep_length: int = 10000,
+    sweeps: int = 5000,
     granularity: int = 100,
     coupling_seed: int = 42,
 ):
@@ -89,8 +89,6 @@ def run_ea_sweep(
     interaction_matrix = nn_mask * random_J
 
     N = lattice_length ** lattice_dim
-    # Number of Monte Carlo sweeps to perform
-    sweeps = 5000 
     sweep_length = sweeps * N
     
     print(f"  EA: L={lattice_length}, D={lattice_dim}, N={N}, "
@@ -257,7 +255,7 @@ def main():
     J = 1.0
     D = 3
 
-    lengths = [4, 8, 16]
+    lengths = [4, 8]  # L=16 runs are possible but take a long time (~7.5 hours)
     N_per_length = {L: L**D for L in lengths}
     all_results: dict[int, dict] = {}
 
@@ -269,7 +267,7 @@ def main():
             betas=betas,
             lattice_replicas=64,
             J=J,
-            sweep_length=8000,
+            sweeps=5000,
             granularity=100,
         )
 

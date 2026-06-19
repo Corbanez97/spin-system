@@ -36,7 +36,7 @@ def run_sk_sweep(
     betas: list[float],
     lattice_replicas: int = 64,
     J: float = 1.0,
-    sweep_length: int = 8000,
+    sweeps: int = 5000,
     granularity: int = 100,
     seed: int | None = 42,
 ):
@@ -45,34 +45,36 @@ def run_sk_sweep(
     results: dict = {}
 
     N = lattice_length ** lattice_dim
+    sweep_length = sweeps * N
     print(f"  SK: L={lattice_length}, D={lattice_dim}, N={N}, "
-          f"replicas={lattice_replicas}, sweeps={sweep_length}")
+          f"replicas={lattice_replicas}, sweeps={sweeps} (total steps={sweep_length})")
+
+    # Initialize ONCE outside the loop to enable Simulated Annealing (hot to cold)
+    system = SherringtonKirkpatrickSystem(
+        lattice_length=lattice_length,
+        lattice_dim=lattice_dim,
+        lattice_replicas=lattice_replicas,
+        J=J,
+        initial_magnetization=0.0, # Hot state (T=infinity)
+        seed=seed,
+    )
+    sim = MetropolisHastings(system)
+
+    tracker = Tracker(
+        measurements=[
+            Energy(system),
+            Magnetization(system),
+            OverlapDistribution(system),
+        ],
+        granularity=granularity,
+    )
 
     for beta in betas:
         print(f"    β = {beta:.4f}")
 
-        system = SherringtonKirkpatrickSystem(
-            lattice_length=lattice_length,
-            lattice_dim=lattice_dim,
-            lattice_replicas=lattice_replicas,
-            J=J,
-            initial_magnetization=0.5,
-            seed=seed,
-        )
-        sim = MetropolisHastings(system)
-
-        tracker = Tracker(
-            measurements=[
-                Energy(system),
-                Magnetization(system),
-                OverlapDistribution(system),
-            ],
-            granularity=granularity,
-        )
-
         sim.sweep(
             tracker=tracker,
-            beta=beta,
+            beta=tf.constant(beta, dtype=tf.float32),
             num_disturbances=num_flips,
             sweep_length=sweep_length,
         )
@@ -216,7 +218,7 @@ def main():
             betas=betas,
             lattice_replicas=64,
             J=J,
-            sweep_length=8000,
+            sweeps=5000,
             granularity=100,
         )
 

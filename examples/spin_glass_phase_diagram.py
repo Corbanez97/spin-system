@@ -14,44 +14,53 @@ from spin_engine.measurements.scalars import SpinGlassOrderParameter
 
 def run_simulation():
     lattice_length = 64
-    lattice_dim = 3
+    lattice_dim = 1
     # 64 replicas gives 64*63/2 = 2016 pairs for smooth P(q)
     lattice_replicas = 64
     J = 1.0
 
     granularity = 100
     num_flips = cast(tf.Tensor, tf.constant(1))
-    sweep_length = 8000
+    
+    N = lattice_length ** lattice_dim
+    sweeps = 2000
+    sweep_length = sweeps * N
 
     betas = [0.2, 0.5, 0.8, 0.9, 1.0, 1.1, 1.5, 2.0]
     
     results = {}
     
     print(f"Starting Phase Diagram Simulation with {len(betas)} betas: {betas}")
+    print(f"  SK: L={lattice_length}, D={lattice_dim}, N={N}, "
+          f"replicas={lattice_replicas}, sweeps={sweeps} (total steps={sweep_length})")
+
+    # Initialize ONCE outside the loop to enable Simulated Annealing (hot to cold)
+    sk_system = SherringtonKirkpatrickSystem(
+        lattice_length=lattice_length,
+        lattice_dim=lattice_dim,
+        lattice_replicas=lattice_replicas,
+        J=J,
+        initial_magnetization=0.0 # Hot state (T=infinity)
+    )
+    simulation = MetropolisHastings(sk_system)
+    
+    q_ea_measurement = SpinGlassOrderParameter(sk_system)
+    
+    tracker = Tracker(measurements=[
+        OverlapDistribution(sk_system),
+        ParisiOverlapParameter(sk_system),
+        q_ea_measurement
+    ], granularity=granularity)
 
     for beta in betas:
         print(f"Running for beta={beta:.4f}")
         
-        sk_system = SherringtonKirkpatrickSystem(
-            lattice_length=lattice_length,
-            lattice_dim=lattice_dim,
-            lattice_replicas=lattice_replicas,
-            J=J,
-            initial_magnetization=0.5
-        )
-        simulation = MetropolisHastings(sk_system)
-        
-        q_ea_measurement = SpinGlassOrderParameter(sk_system)
-        
-        tracker = Tracker(measurements=[
-            OverlapDistribution(),
-            ParisiOverlapParameter(),
-            q_ea_measurement
-        ], granularity=granularity)
+        # Reset stateful measurements between beta sweeps
+        q_ea_measurement.reset()
         
         simulation.sweep(
             tracker=tracker,
-            beta=beta,
+            beta=tf.constant(beta, dtype=tf.float32),
             num_disturbances=num_flips,
             sweep_length=sweep_length
         )
