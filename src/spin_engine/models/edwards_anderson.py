@@ -83,3 +83,64 @@ class EdwardsAndersonSystem(BaseSpinSystem):
         pairwise = -0.5 * tf.reduce_sum(spin_state_flat * h_local, axis=1)
 
         return pairwise
+
+    def compute_delta_energy(
+        self,
+        spin_state: tf.Tensor,
+        updated_spin_state: tf.Tensor,
+        changed_indices: tf.Tensor,
+    ) -> tf.Tensor:
+        """
+        Efficient ΔE for Edwards-Anderson spin flips.
+
+        Same formula as Ising but without external field:
+            ΔE = 2 Σ_k σ_{n_k} h_{n_k}
+                 - 2 Σ_{i,j∈D} J_{ij} σ_i σ_j   (cross-term for multi-flip)
+
+        For single-site flips (num_flips=1), the cross-term vanishes (J_nn=0).
+
+        Args:
+            spin_state: Current spin state, shape (replicas, L, ..., L).
+            updated_spin_state: Proposed spin state (unused, indices suffice).
+            changed_indices: Flat indices of flipped sites, shape (replicas, num_flips).
+
+        Returns:
+            tf.Tensor of shape (replicas,) — the energy difference E_new - E_old.
+        """
+        N = tf.cast(self.number_spins, tf.int32)
+        num_flips = tf.shape(changed_indices)[1]
+
+        # Flatten spins: (replicas, N)
+        spin_flat = tf.reshape(spin_state, (self.lattice_replicas, -1))
+
+        # Flatten J: (N, N)
+        J_flat = tf.reshape(self.interaction_matrix, (N, N))
+
+        # Gather J rows for flipped sites
+        flat_idx = tf.reshape(changed_indices, [-1])
+        J_rows = tf.gather(J_flat, flat_idx)
+        J_rows = tf.reshape(J_rows, (self.lattice_replicas, num_flips, N))
+
+        # Local fields h_n = Σ_j J_{nj} σ_j
+        h_local = tf.reduce_sum(
+            J_rows * spin_flat[:, tf.newaxis, :], axis=-1
+        )  # (replicas, num_flips)
+
+        # Spin values at flipped sites
+        s_flipped = tf.gather(spin_flat, changed_indices, batch_dims=1)
+
+        # Term 1: Σ_k 2 * σ_{n_k} * h_{n_k}
+        term1 = tf.reduce_sum(
+            2.0 * s_flipped * h_local, axis=-1
+        )  # (replicas,)
+
+        # Term 2: Cross-term for multi-site flips
+        # -½ Σ_{i,j∈D} J_ij Δσ_i Δσ_j where Δσ = -2σ
+        # = -2 Σ_{i,j∈D} J_ij σ_i σ_j
+        J_sub = tf.gather(J_rows, changed_indices, batch_dims=1, axis=2)
+        term2 = -2.0 * tf.reduce_sum(
+            s_flipped[:, :, tf.newaxis] * J_sub * s_flipped[:, tf.newaxis, :],
+            axis=[-2, -1]
+        )  # (replicas,)
+
+        return term1 + term2

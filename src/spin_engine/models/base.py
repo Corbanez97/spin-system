@@ -53,6 +53,77 @@ class BaseSpinSystem(tf.Module, abc.ABC):
         """
         pass
 
+    def compute_delta_energy(
+        self,
+        spin_state: tf.Tensor,
+        updated_spin_state: tf.Tensor,
+        changed_indices: tf.Tensor,
+    ) -> tf.Tensor:
+        """
+        Computes the energy change ΔE from a local spin update.
+
+        Uses the general formula:
+            ΔE = -Σ_{j∈D} Δσ_j h_j  -  ½ Σ_{i,j∈D} J_ij Δσ_i Δσ_j
+        where h_j = Σ_i J_ij σ_i is the local field at site j.
+
+        This default implementation uses the dense interaction matrix and works
+        for any model that stores self.interaction_matrix. Models without one
+        (e.g., WegnerSystem) fall back to full energy recomputation.
+
+        Args:
+            spin_state: Current spin state, shape (replicas, L, ..., L).
+            updated_spin_state: Proposed spin state after flipping.
+            changed_indices: Flat indices of flipped sites, shape (replicas, num_flips).
+
+        Returns:
+            tf.Tensor of shape (replicas,) — the energy difference E_new - E_old.
+        """
+        # Fallback for models without an interaction matrix (e.g., Wegner, TSP)
+        if not hasattr(self, 'interaction_matrix'):
+            return self.compute_energy(updated_spin_state) - self.compute_energy(spin_state)
+
+        N = tf.cast(self.number_spins, tf.int32)
+        num_flips = tf.shape(changed_indices)[1]
+
+        # Flatten states: (replicas, N)
+        spin_flat = tf.reshape(spin_state, (self.lattice_replicas, -1))
+        updated_flat = tf.reshape(updated_spin_state, (self.lattice_replicas, -1))
+
+        # Δσ at changed sites: (replicas, num_flips)
+        delta_sigma = tf.gather(updated_flat, changed_indices, batch_dims=1) \
+                    - tf.gather(spin_flat, changed_indices, batch_dims=1)
+
+        # Flatten J: (N, N)
+        J_flat = tf.reshape(self.interaction_matrix, (N, N))
+
+        # Gather J rows for all flipped sites across replicas
+        flat_idx = tf.reshape(changed_indices, [-1])               # (replicas * num_flips,)
+        J_rows = tf.gather(J_flat, flat_idx)                       # (replicas * num_flips, N)
+        J_rows = tf.reshape(J_rows, (self.lattice_replicas, num_flips, N))
+
+        # Local fields h_j = Σ_i J_ji σ_i for each changed site j
+        # spin_flat: (replicas, N) → (replicas, 1, N)
+        h_local = tf.reduce_sum(
+            J_rows * spin_flat[:, tf.newaxis, :], axis=-1
+        )  # (replicas, num_flips)
+
+        # Term 1: -Σ_j Δσ_j h_j
+        term1 = -tf.reduce_sum(delta_sigma * h_local, axis=-1)  # (replicas,)
+
+        # Term 2: -½ Σ_{i,j∈D} J_ij Δσ_i Δσ_j (self-interaction correction)
+        # For single-site flips with J_nn = 0 this vanishes, but we compute it
+        # for correctness with multi-site flips.
+        # Gather the sub-matrix J[D, D]: (replicas, num_flips, num_flips)
+        # Build column gather from J_rows at the changed indices
+        J_sub = tf.gather(J_rows, changed_indices, batch_dims=1, axis=2)  # (replicas, num_flips, num_flips)
+        # Δσ: (replicas, num_flips) → (replicas, num_flips, 1) and (replicas, 1, num_flips)
+        term2 = -0.5 * tf.reduce_sum(
+            delta_sigma[:, :, tf.newaxis] * J_sub * delta_sigma[:, tf.newaxis, :],
+            axis=[-2, -1]
+        )  # (replicas,)
+
+        return term1 + term2
+
     def update_state(self, updated_spin_state: tf.Tensor) -> None:
         """
         Take a new spin configuration and update the current state.

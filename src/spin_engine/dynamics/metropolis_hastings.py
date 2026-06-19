@@ -21,16 +21,16 @@ class MetropolisHastings(Dynamics):
 
     def flip_spins(self, num_flips: tf.Tensor) -> Tuple[tf.Tensor, tf.Tensor]:
         """
-        Flip n spins 
+        Flip n spins and compute the energy change efficiently using ΔE.
         """
         spin_flat = tf.reshape(self.system.spin_state,
                                (self.system.lattice_replicas, -1))
 
-        idx = tf.stack([
-            tf.random.shuffle(tf.range(self.system.number_spins, dtype=tf.int32))[
-                :num_flips]
-            for _ in range(self.system.lattice_replicas)
-        ], axis=0)
+        idx = tf.random.uniform(
+            shape=(self.system.lattice_replicas, num_flips),
+            maxval=tf.cast(self.system.number_spins, tf.int32),
+            dtype=tf.int32
+        )
         replica_idx = tf.repeat(tf.range(self.system.lattice_replicas)[
                                 :, None], num_flips, axis=1)
         scatter_indices = tf.stack([replica_idx, idx], axis=-1)
@@ -45,7 +45,10 @@ class MetropolisHastings(Dynamics):
             spin_flat, scatter_indices, updates)
         updated = tf.reshape(updated, self.system.spin_state.shape)
 
-        updated_energy = self.system.compute_energy(updated)
+        # Use incremental ΔE instead of full energy recomputation
+        delta_energy = self.system.compute_delta_energy(
+            self.system.spin_state, updated, idx)
+        updated_energy = self.current_energy + delta_energy
 
         return updated, updated_energy
 

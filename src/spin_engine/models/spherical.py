@@ -81,7 +81,7 @@ class SphericalSystem(BaseSpinSystem):
             spin_state = self.spin_state.value()
         # Flatten spins: (replicas, N)
         spin_state_flat = tf.reshape(
-            self.spin_state, (self.lattice_replicas, -1))
+            spin_state, (self.lattice_replicas, -1))
 
         # Flatten interaction matrix: (N, N)
         interaction_matrix_flat = tf.reshape(
@@ -98,3 +98,65 @@ class SphericalSystem(BaseSpinSystem):
                                     external_field_flat, axis=1)
 
         return pairwise + field_term
+
+    def compute_delta_energy(
+        self,
+        spin_state: tf.Tensor,
+        updated_spin_state: tf.Tensor,
+        changed_indices: tf.Tensor,
+    ) -> tf.Tensor:
+        """
+        ΔE for continuous (spherical) spin perturbations with external field.
+
+        Uses the general formula:
+            ΔE = -Σ_{j∈D} Δσ_j (h_j + h^ext_j)  -  ½ Σ_{i,j∈D} J_ij Δσ_i Δσ_j
+        where h_j = Σ_i J_ij σ_i is the local field and Δσ_j is continuous.
+
+        Args:
+            spin_state: Current spin state, shape (replicas, L, ..., L).
+            updated_spin_state: Proposed spin state after perturbation.
+            changed_indices: Flat indices of perturbed sites, shape (replicas, num_flips).
+
+        Returns:
+            tf.Tensor of shape (replicas,) — the energy difference E_new - E_old.
+        """
+        N = tf.cast(self.number_spins, tf.int32)
+        num_flips = tf.shape(changed_indices)[1]
+
+        # Flatten states: (replicas, N)
+        spin_flat = tf.reshape(spin_state, (self.lattice_replicas, -1))
+        updated_flat = tf.reshape(updated_spin_state, (self.lattice_replicas, -1))
+
+        # Δσ at changed sites: (replicas, num_flips)
+        delta_sigma = tf.gather(updated_flat, changed_indices, batch_dims=1) \
+                    - tf.gather(spin_flat, changed_indices, batch_dims=1)
+
+        # Flatten J: (N, N)
+        J_flat = tf.reshape(self.interaction_matrix, (N, N))
+
+        # Gather J rows for perturbed sites
+        flat_idx = tf.reshape(changed_indices, [-1])
+        J_rows = tf.gather(J_flat, flat_idx)
+        J_rows = tf.reshape(J_rows, (self.lattice_replicas, num_flips, N))
+
+        # Local fields h_j = Σ_i J_ji σ_i
+        h_local = tf.reduce_sum(
+            J_rows * spin_flat[:, tf.newaxis, :], axis=-1
+        )  # (replicas, num_flips)
+
+        # External field at perturbed sites
+        field_flat = tf.reshape(self.external_field, [-1])
+        h_ext = tf.gather(field_flat, flat_idx)
+        h_ext = tf.reshape(h_ext, (self.lattice_replicas, num_flips))
+
+        # Term 1: -Σ_j Δσ_j (h_j + h^ext_j)
+        term1 = -tf.reduce_sum(delta_sigma * (h_local + h_ext), axis=-1)
+
+        # Term 2: -½ Σ_{i,j∈D} J_ij Δσ_i Δσ_j
+        J_sub = tf.gather(J_rows, changed_indices, batch_dims=1, axis=2)
+        term2 = -0.5 * tf.reduce_sum(
+            delta_sigma[:, :, tf.newaxis] * J_sub * delta_sigma[:, tf.newaxis, :],
+            axis=[-2, -1]
+        )
+
+        return term1 + term2
