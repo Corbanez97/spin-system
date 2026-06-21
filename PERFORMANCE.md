@@ -116,6 +116,51 @@ Even accounting for TF overhead and batching over replicas, this yields **orders
 - `src/spin_engine/models/edwards_anderson.py` — override local field extraction
 - `src/spin_engine/dynamics/metropolis_hastings.py` — use `compute_delta_energy()` in `step()`
 
+**Caveat**: This fix covers Ising, EA, SK, and Spherical (anything with `self.interaction_matrix`). `WegnerSystem` has no interaction matrix and currently falls back to full recomputation on every step — see the correctness bugs below, which also block Wegner from being driven through `MetropolisHastings` at all for most replica counts.
+
+---
+
+### 🔴 P0 — Correctness Bugs Blocking Wegner Model Benchmarking
+
+**Where**: [`MetropolisHastings.step()`](src/spin_engine/dynamics/metropolis_hastings.py#L87-L91) and [`MetropolisHastings.flip_spins()`](src/spin_engine/dynamics/metropolis_hastings.py#L22-L53)
+
+**Discovered**: while extending the replica-scaling benchmark (`examples/benchmark_replicas.py`) to cover all five models instead of just Ising/EA, `WegnerSystem` driven through `MetropolisHastings` failed outright for most replica counts and was silently wrong for the rest.
+
+**Bug 1 — wrong reshape rank for gauge models**:
+```python
+new_spin_state = tf.where(
+    tf.reshape(accept, (-1,) + (1,) * self.system.lattice_dim),
+    updated,
+    self.system.spin_state
+)
+```
+This assumes `spin_state.shape == (replicas,) + (L,) * lattice_dim`, which holds for Ising/EA/SK/Spherical. `WegnerSystem.spin_state` has an **extra trailing link-direction axis**: `(replicas, L, ..., L, lattice_dim)`. The reshape to `(-1, 1, 1)` (for `lattice_dim=2`) is one rank short, so `tf.where`'s broadcast either:
+- **Raises `ValueError`** when `replicas != lattice_length` (e.g. R=32, L=8 → `Dimensions must be equal, but are 32 and 8`), or
+- **Silently broadcasts wrong** when `replicas == lattice_length` — the per-replica accept/reject mask gets reinterpreted as a per-row mask along the lattice's first spatial axis instead, corrupting the physics with no error raised.
+
+**Bug 2 — non-ergodic flip sampling for gauge models**:
+```python
+idx = tf.random.uniform(
+    shape=(self.system.lattice_replicas, num_flips),
+    maxval=tf.cast(self.system.number_spins, tf.int32),
+    dtype=tf.int32
+)
+```
+`number_spins = L ** lattice_dim` counts lattice **sites**, but a gauge model's flattened state has `L**lattice_dim * lattice_dim` entries (one per link direction per site). Sampling indices only up to `number_spins` restricts flips to roughly the first `1/lattice_dim` fraction of links — the rest can never be selected, breaking ergodicity. (`tests/test_delta_energy.py`'s `TestDeltaEnergyWegner` works around this correctly by sampling up to the true flattened size, which is how the bug was confirmed.)
+
+**Compounding gap — no ΔE acceleration for Wegner**: `WegnerSystem` has no `interaction_matrix`, so `compute_delta_energy()` falls back to the base class's `compute_energy(updated) - compute_energy(spin_state)` — a **full plaquette recomputation on every single proposed flip**, independent of Bugs 1/2. The P0 ΔE optimization above does not apply to Wegner at all; every MC step costs a full O(N·D) plaquette sweep (paid twice — once per energy call), unlike Ising/EA/SK/Spherical's O(k·N) local update.
+
+**Impact**: `WegnerSystem` cannot currently be driven through `MetropolisHastings.step()`/`.sweep()` for general replica counts. `examples/wegner.py` is unaffected only because it doesn't drive the model through `sim.sweep()` with a tracker in the standard pattern — don't assume it's safe to batch Wegner over replicas without fixing this first.
+
+**Fix sketch**:
+1. Reshape `accept` against the actual rank of `spin_state` (e.g. `tf.reshape(accept, (-1,) + (1,) * (len(self.system.spin_state.shape) - 1))`) instead of hardcoding `lattice_dim`.
+2. Sample flip indices up to the true flattened size (`tf.size(spin_flat) // replicas`), not `number_spins`.
+3. Give `WegnerSystem` its own `compute_delta_energy()` (recomputing only the plaquettes touching a flipped link) — full recompute is a separate, real performance gap once 1 and 2 are fixed.
+
+**Files affected**:
+- `src/spin_engine/dynamics/metropolis_hastings.py` — fix reshape rank and flip-index bound
+- `src/spin_engine/models/wegner.py` — add a local `compute_delta_energy()` override
+
 ---
 
 ### 🔴 P0 — Dense Interaction Matrix Storage (Critical for large N)
@@ -270,6 +315,7 @@ Since `replicas` is constant, this mask should be computed once at initializatio
 | Priority | Item | Expected Impact | Complexity | Dependencies |
 |---|---|---|---|---|
 | 🔴 P0 | `compute_delta_energy()` on models | **100-10,000× per step** | Medium | None |
+| 🔴 P0 | Fix Wegner+`MetropolisHastings` shape/ergodicity bugs | **Correctness** — blocks all Wegner batching/benchmarking | Low-Medium | None |
 | 🔴 P0 | Sparse/neighbor-list J storage | **Memory: 100×, enables large L** | Medium | Pairs well with P0 |
 | 🟡 P1 | Energy measurement reads cached value | **2× fewer matmuls per tracked step** | Low | Requires P0 |
 | 🟡 P1 | Fix SK/phase_diagram re-instantiation | **~N× fewer retracings** | Low | None |
@@ -300,7 +346,7 @@ These optimizations should be considered **Milestone 3.0** — a prerequisite be
 
 | MILESTONES.md Item | Blocked By |
 |---|---|
-| MS2: Wegner Phase Transition (3D) | Large L requires fast sweeps |
+| MS2: Wegner Phase Transition (3D) | Large L requires fast sweeps; also blocked by the Wegner+`MetropolisHastings` correctness bugs above — fix before relying on replica batching |
 | MS3.1: Annealing inside sweep | Natural extension of P0 refactor |
 | MS3.2: Wolff cluster algorithm | Separate dynamics, but benefits from same ΔE infrastructure |
 | MS3.3: Parallel Tempering | Requires fast single-temperature sweeps |
