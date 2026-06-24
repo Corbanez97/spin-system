@@ -4,11 +4,16 @@ Edwards-Anderson (EA) Spin Glass — Observables and Parisi Distribution Plot.
 This script simulates the 3D EA model across a range of temperatures/betas
 for multiple lattice sizes, calculates the Specific Heat, Overlap, Overlap
 Susceptibility, and the Parisi Overlap Distribution, and saves a 2x2 grid plot
-similar to `ising_observables.png`.
+using premium publication-quality style parameters.
+
+It stores simulation results incrementally per lattice size L into JSON files in
+examples/data/ to prevent data loss, enable resuming runs, and group datasets.
 """
 
 import os
+import glob
 import json
+import argparse
 import numpy as np
 import tensorflow as tf
 import matplotlib.pyplot as plt
@@ -25,7 +30,7 @@ from spin_engine.measurements.correlations import OverlapDistribution
 
 
 def generate_betas(
-    num_betas: int = 20,
+    num_betas: int = 25,
     critical_beta: float = 0.909,
     min_beta: float = 0.2,
     max_beta: float = 2.5,
@@ -56,49 +61,68 @@ def generate_betas(
     return betas.tolist()
 
 
-def run_simulation():
+def run_simulation(is_test: bool = False, force_run: bool = False):
     # Simulation Parameters
-    L_list = [4, 6]
-    lattice_replicas = 64
-    betas = generate_betas(5)
+    if is_test:
+        L_list = [4]
+        lattice_replicas = 16
+        betas = generate_betas(3, min_beta=0.2, max_beta=2.5)
+        sweeps = 200
+    else:
+        L_list = [4, 8, 12]#, 16]
+        lattice_replicas = 512
+        betas = generate_betas(25, min_beta=0.2, max_beta=2.5)
+        sweeps = 1000
+        
     J = 1.0
     coupling_seed = 42
-    granularity = 100
-    
     num_flips = cast(tf.Tensor, tf.constant(1))
     
-    results_dict: Dict[str, Any] = {
-        'L_list': L_list,
-        'betas': betas,
-        'data': {},
-        'parisi': {} # lowest temp P(q) distribution for each L
-    }
+    data_dir = 'examples/data'
+    os.makedirs(data_dir, exist_ok=True)
     
     print("Starting Edwards-Anderson Spin Glass Observables Simulation (3D)")
     print(f"Lattice sizes: {L_list}")
     print(f"Number of betas: {len(betas)}")
+    print(f"Replicas: {lattice_replicas}")
+    print(f"Sweeps per temperature: {sweeps}")
     
     for L in L_list:
-        results_dict['data'][str(L)] = {
-            'q2': [], 'chi_sg': [], 'cv': []
-        }
-        
         N = L ** 3
+        sweep_length = sweeps * N
+        # Scale granularity to always record ~200 steps to prevent OOM errors
+        granularity = max(1, sweep_length // 200)
+
+        cache_file = os.path.join(data_dir, f"ea_observables_L{L}.json")
+        
+        # Caching/Resuming Check
+        if os.path.exists(cache_file) and not force_run:
+            try:
+                with open(cache_file, 'r') as f:
+                    cached_data = json.load(f)
+                
+                # Verify that parameters match to prevent loading wrong configurations
+                betas_match = len(cached_data.get('betas', [])) == len(betas) and np.allclose(cached_data.get('betas', []), betas)
+                params_match = (
+                    cached_data.get('lattice_replicas') == lattice_replicas and
+                    cached_data.get('sweeps') == sweeps and
+                    cached_data.get('granularity') == granularity and
+                    betas_match
+                )
+                
+                if params_match:
+                    print(f"\n--- Found cached data for L={L} ({cache_file}). Skipping simulation. ---")
+                    continue
+                else:
+                    print(f"\n--- Parameter mismatch in cache for L={L}. Re-running simulation. ---")
+            except Exception as e:
+                print(f"\n--- Error reading cache for L={L} ({e}). Re-running simulation. ---")
         
         # Build quenched coupling matrix (same for all betas)
         nn_mask = PeriodicNearestNeighborInteraction().generate(3, L)
         random_J = BinaryRandomInteraction(J=J, seed=coupling_seed).generate(3, L)
         interaction_matrix = nn_mask * random_J
         
-        # Define sweep length dynamically based on system size L to ensure proper equilibration
-        if L == 4:
-            sweeps = 4000
-        elif L == 6:
-            sweeps = 3000
-        else: # L == 8
-            sweeps = 2000
-            
-        sweep_length = sweeps * N
         burn_in_steps = int((sweep_length / granularity) * 0.5)  # Discard first 50% for equilibration
         
         print(f"\n--- Running for Lattice Size L={L} (sweeps={sweeps}, total steps={sweep_length}) ---")
@@ -120,6 +144,11 @@ def run_simulation():
             ],
             granularity=granularity,
         )
+        
+        q2_list = []
+        chi_sg_list = []
+        cv_list = []
+        last_pq_flat = []
         
         # Ascending betas = decreasing temperature (Annealing)
         for beta in betas:
@@ -148,24 +177,89 @@ def run_simulation():
             q2_avg = np.mean(pq_flat**2)
             chi_sg = beta * N * q2_avg
             
-            results_dict['data'][str(L)]['cv'].append(float(cv))
-            results_dict['data'][str(L)]['q2'].append(float(q2_avg))
-            results_dict['data'][str(L)]['chi_sg'].append(float(chi_sg))
+            cv_list.append(float(cv))
+            q2_list.append(float(q2_avg))
+            chi_sg_list.append(float(chi_sg))
             
             print(f"  beta={beta:.4f} | T={1/beta:.3f} | <q^2>={q2_avg:.4f} | chi_SG={chi_sg:.4f} | cv={cv:.4f}")
             
-        # Store lowest temp (highest beta) overlap values for Parisi Distribution plot
-        # the last beta checked is the highest beta (lowest temp)
-        last_beta = betas[-1]
-        results_dict['parisi'][str(L)] = pq_hist.flatten().tolist()
+        # Store lowest temp (highest beta) overlap values
+        last_pq_flat = pq_hist.flatten().tolist()
         
-    # Save results to JSON for persistence
+        # Write results for this size L to its individual JSON file
+        size_data = {
+            'L': L,
+            'lattice_replicas': lattice_replicas,
+            'sweeps': sweeps,
+            'granularity': granularity,
+            'betas': betas,
+            'q2': q2_list,
+            'chi_sg': chi_sg_list,
+            'cv': cv_list,
+            'parisi': last_pq_flat
+        }
+        
+        with open(cache_file, 'w') as f:
+            json.dump(size_data, f)
+        print(f"Saved L={L} results to {cache_file}")
+        
+    print("\nSimulation phase complete. Compiling all available data for plotting...")
+    
+    # Compile results for all matching JSON files in examples/data/
+    file_pattern = os.path.join(data_dir, "ea_observables_L*.json")
+    all_files = glob.glob(file_pattern)
+    
+    plot_data: Dict[str, Any] = {
+        'L_list': [],
+        'betas': betas,
+        'data': {},
+        'parisi': {}
+    }
+    
+    for fp in all_files:
+        try:
+            with open(fp, 'r') as f:
+                d = json.load(f)
+            
+            # Verify if this file's parameters match the current configuration
+            betas_match = len(d.get('betas', [])) == len(betas) and np.allclose(d.get('betas', []), betas)
+            L_val = d.get('L', 0)
+            expected_granularity = max(1, (sweeps * (L_val**3)) // 200)
+            params_match = (
+                d.get('lattice_replicas') == lattice_replicas and
+                d.get('sweeps') == sweeps and
+                d.get('granularity') == expected_granularity and
+                betas_match
+            )
+            
+            if params_match:
+                L_str = str(L_val)
+                plot_data['L_list'].append(L_val)
+                plot_data['data'][L_str] = {
+                    'q2': d['q2'],
+                    'chi_sg': d['chi_sg'],
+                    'cv': d['cv']
+                }
+                plot_data['parisi'][L_str] = d['parisi']
+        except Exception as e:
+            print(f"Warning: Failed to load file {fp} for plotting: {e}")
+            
+    # Sort the lattice sizes for plotting
+    plot_data['L_list'] = sorted(list(set(plot_data['L_list'])))
+    
+    if not plot_data['L_list']:
+        print("Error: No valid datasets found matching current parameters.")
+        return
+        
+    # Save the compiled results summary to JSON for convenience
     os.makedirs('examples/output', exist_ok=True)
-    with open('examples/output/ea_observables_results.json', 'w') as f:
-        json.dump(results_dict, f)
-        
-    print("\nSimulation complete. Plotting results...")
-    plot_results(results_dict)
+    summary_file = 'examples/output/ea_observables_results.json'
+    with open(summary_file, 'w') as f:
+        json.dump(plot_data, f)
+    print(f"Saved compiled summary JSON to {summary_file}")
+    
+    print(f"Plotting results for lattice sizes: {plot_data['L_list']}")
+    plot_results(plot_data)
 
 
 def plot_results(results_dict: Dict[str, Any]):
@@ -177,29 +271,45 @@ def plot_results(results_dict: Dict[str, Any]):
     
     Tc_exact = 1.1  # Expected critical temperature in 3D
     
+    # Set premium publication-quality style parameters
+    plt.rcParams.update({
+        'font.size': 11,
+        'axes.labelsize': 12,
+        'axes.titlesize': 13,
+        'xtick.labelsize': 10,
+        'ytick.labelsize': 10,
+        'figure.titlesize': 15,
+        'legend.fontsize': 10,
+        'axes.grid': True,
+        'grid.alpha': 0.3,
+        'grid.linestyle': '--'
+    })
+    
+    # Using a perceptually uniform colormap to represent size scale
+    cmap = plt.get_cmap('viridis')
+    colors = [cmap(i) for i in np.linspace(0.1, 0.9, len(L_list))]
+    
     fig, axs = plt.subplots(2, 2, figsize=(14, 10))
     axs = axs.flatten()
     
-    colors = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728']
-    
     for i, L in enumerate(L_list):
         L_str = str(L)
-        c = colors[i % len(colors)]
+        color = colors[i]
         
         # 1. Overlap vs T
-        axs[0].plot(temps, data[L_str]['q2'], 'o-', color=c, label=f'L={L}')
+        axs[0].plot(temps, data[L_str]['q2'], 'o-', color=color, markersize=4, linewidth=1.5, label=f'L={L}')
         
         # 2. Overlap Susceptibility vs T
-        axs[1].plot(temps, data[L_str]['chi_sg'], 's-', color=c, label=f'L={L}')
+        axs[1].plot(temps, data[L_str]['chi_sg'], 's-', color=color, markersize=4, linewidth=1.5, label=f'L={L}')
         
         # 3. Specific Heat vs T
-        axs[2].plot(temps, data[L_str]['cv'], '^-', color=c, label=f'L={L}')
+        axs[2].plot(temps, data[L_str]['cv'], '^-', color=color, markersize=4, linewidth=1.5, label=f'L={L}')
         
         # 4. Parisi Distribution at lowest temperature
         sns.kdeplot(
             np.array(parisi[L_str]),
             ax=axs[3],
-            color=c,
+            color=color,
             fill=True,
             alpha=0.15,
             label=f'L={L}'
@@ -208,10 +318,9 @@ def plot_results(results_dict: Dict[str, Any]):
     # Add labels and format plots
     for idx in range(3):
         ax = axs[idx]
-        ax.axvline(Tc_exact, color='k', linestyle='--', alpha=0.5, label=r'$T_c \approx 1.1$')
+        ax.axvline(Tc_exact, color='crimson', linestyle=':', linewidth=1.5, alpha=0.8, label=r'$T_c \approx 1.1$')
         ax.set_xlabel(r'$T = 1/\beta$')
         ax.grid(True, alpha=0.3)
-        ax.legend()
         
     axs[0].set_ylabel(r'$\langle q^2 \rangle$')
     axs[0].set_title('Spin Glass Order Parameter')
@@ -227,13 +336,29 @@ def plot_results(results_dict: Dict[str, Any]):
     axs[3].set_ylabel(r'$P(q)$')
     axs[3].set_title(f'Parisi Overlap Distribution at $T = {1.0/betas[-1]:.2f}$')
     axs[3].grid(True, alpha=0.3)
-    axs[3].legend()
     
+    # Single unified legend to avoid crowding
+    handles, labels = axs[0].get_legend_handles_labels()
+    unique_labels = {}
+    for h, l in zip(handles, labels):
+        if l not in unique_labels:
+            unique_labels[l] = h
+    fig.legend(unique_labels.values(), unique_labels.keys(), loc='center right', bbox_to_anchor=(1.12, 0.5), borderaxespad=0.)
+    
+    plt.suptitle('3D Edwards-Anderson Spin Glass Observables', y=0.98, weight='bold')
     plt.tight_layout()
+    plt.subplots_adjust(right=0.88)
+    
     os.makedirs('examples/images', exist_ok=True)
-    plt.savefig('examples/images/ea_observables.png', dpi=150)
-    print("Saved observables plot to examples/images/ea_observables.png")
+    plt.savefig('examples/images/ea_observables.png', dpi=300, bbox_inches='tight')
+    print("Saved premium observables plot to examples/images/ea_observables.png")
+    plt.close()
 
 
 if __name__ == "__main__":
-    run_simulation()
+    parser = argparse.ArgumentParser(description="Simulate 3D Edwards-Anderson model.")
+    parser.add_argument("--test", action="store_true", help="Run a quick test simulation.")
+    parser.add_argument("--force", action="store_true", help="Force re-running simulations even if cache exists.")
+    args = parser.parse_args()
+    
+    run_simulation(is_test=args.test, force_run=args.force)
