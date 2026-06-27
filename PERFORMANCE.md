@@ -113,12 +113,31 @@ Even accounting for TF overhead and batching over replicas, this yields **orders
 **Files affected**:
 - `src/spin_engine/models/base.py` — add abstract/default `compute_delta_energy()`
 - `src/spin_engine/models/ising.py` — override local field extraction
-- `src/spin_engine/models/edwards_anderson.py` — override local field extraction
-- `src/spin_engine/dynamics/metropolis_hastings.py` — use `compute_delta_energy()` in `step()`
+    - `src/spin_engine/models/edwards_anderson.py` — override local field extraction
+    - `src/spin_engine/dynamics/metropolis_hastings.py` — use `compute_delta_energy()` in `step()`
 
-**Caveat**: This fix covers Ising, EA, SK, and Spherical (anything with `self.interaction_matrix`). `WegnerSystem` has no interaction matrix and currently falls back to full recomputation on every step — see the correctness bugs below, which also block Wegner from being driven through `MetropolisHastings` at all for most replica counts.
+    **Caveat**: This fix covers Ising, EA, SK, and Spherical (anything with `self.interaction_matrix`). `WegnerSystem` has no interaction matrix and currently falls back to full recomputation on every step — see the correctness bugs below, which also block Wegner from being driven through `MetropolisHastings` at all for most replica counts.
 
----
+    ---
+
+    ### 🔴 P0 — O(N) Memory Copies for Single Spin Flips (`tf.where` overhead)
+
+    **Where**: [`MetropolisHastings.step()`](src/spin_engine/dynamics/metropolis_hastings.py)
+
+    **Problem**: Even with incremental $\Delta E$, proposing a flip required copying the entire lattice using `tf.tensor_scatter_nd_update` to create `updated`. Then, to conditionally accept the new state, `tf.where(accept, updated, original_state)` was called. Both of these operations are dense tensor updates, which means the GPU was doing an $O(N)$ memory copy just to flip a single spin! 
+
+    For $L=12$ with 512 replicas, the lattice has $12^3 \times 512 = 884,736$ spins. Doing a full copy per step saturates the GPU's memory bandwidth entirely (VRAM bottleneck), leaving the math ALUs starving and drastically reducing GPU utilization for large systems.
+
+    **Implementation approach**:
+    1. Change `flip_spins()` to return only the specific indices and values of the proposed update, avoiding the creation of the full `updated` tensor since `compute_delta_energy()` relies strictly on indices anyway.
+    2. Inside `step()`, evaluate the Metropolis `accept` criterion first.
+    3. Use a single in-place (conceptually) `tf.tensor_scatter_nd_update` that modifies *only* the accepted indices, bypassing `tf.where` on the full lattice completely. 
+    4. This drops the memory bandwidth requirement per step from $O(N)$ to $O(1)$.
+
+    **Files affected**:
+    - `src/spin_engine/dynamics/metropolis_hastings.py` — rewrote `step()` and `flip_spins()` to operate with scattered in-place updates.
+
+    ---
 
 ### 🔴 P0 — Correctness Bugs Blocking Wegner Model Benchmarking
 
