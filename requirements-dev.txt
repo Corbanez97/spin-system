@@ -147,6 +147,7 @@ soupsieve==2.8.1
 stack-data==0.6.3
 tensorboard==2.20.0
 tensorboard-data-server==0.7.2
+tensorboard-plugin-profile==2.22.1
 tensorflow==2.20.0
 termcolor==3.3.0
 terminado==0.18.1
