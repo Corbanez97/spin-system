@@ -31,11 +31,11 @@ from spin_engine.measurements.correlations import OverlapDistribution
 
 def generate_betas(
     num_betas: int = 25,
-    critical_beta: float = 0.909,
+    critical_beta: float = 0.892,
     min_beta: float = 0.2,
     max_beta: float = 2.5,
 ) -> List[float]:
-    """Generates a list of betas concentrated around the critical temperature (Tc ~ 1.1 => beta_c ~ 0.909)."""
+    """Generates a list of betas concentrated around the critical temperature (Tc ~ 1.124 => beta_c ~ 0.892)."""
     dense_range = 0.2
     num_dense = int(0.6 * num_betas)
     num_sparse = num_betas - num_dense
@@ -66,12 +66,12 @@ def run_simulation(is_test: bool = False, force_run: bool = False):
     if is_test:
         L_list = [4]
         lattice_replicas = 16
-        betas = generate_betas(3, min_beta=0.2, max_beta=2.5)
+        betas = generate_betas(3, min_beta=1/3, max_beta=2.5)
         sweeps = 200
     else:
-        L_list = [4, 8, 12]#, 16]
+        L_list = [6, 8, 10, 12, 16]
         lattice_replicas = 512
-        betas = generate_betas(25, min_beta=0.2, max_beta=2.5)
+        betas = generate_betas(25, min_beta=1/3, max_beta=2.5)
         sweeps = 1000
         
     J = 1.0
@@ -148,7 +148,9 @@ def run_simulation(is_test: bool = False, force_run: bool = False):
         q2_list = []
         chi_sg_list = []
         cv_list = []
-        last_pq_flat = []
+        binder_list = []
+        parisi_hists = []
+        q_bins = None
         
         # Ascending betas = decreasing temperature (Annealing)
         for beta in betas:
@@ -175,17 +177,22 @@ def run_simulation(is_test: bool = False, force_run: bool = False):
             
             pq_flat = pq_hist.flatten()
             q2_avg = np.mean(pq_flat**2)
+            q4_avg = np.mean(pq_flat**4)
             chi_sg = beta * N * q2_avg
+            binder = 0.5 * (3.0 - q4_avg / (q2_avg**2)) if q2_avg > 0 else 0.0
             
             cv_list.append(float(cv))
             q2_list.append(float(q2_avg))
             chi_sg_list.append(float(chi_sg))
+            binder_list.append(float(binder))
             
-            print(f"  beta={beta:.4f} | T={1/beta:.3f} | <q^2>={q2_avg:.4f} | chi_SG={chi_sg:.4f} | cv={cv:.4f}")
+            hist, bin_edges = np.histogram(pq_flat, bins=100, range=(-1.05, 1.05), density=True)
+            if q_bins is None:
+                q_bins = (bin_edges[:-1] + bin_edges[1:]) / 2
+            parisi_hists.append(hist.tolist())
             
-        # Store lowest temp (highest beta) overlap values
-        last_pq_flat = pq_hist.flatten().tolist()
-        
+            print(f"  beta={beta:.4f} | T={1/beta:.3f} | <q^2>={q2_avg:.4f} | chi_SG={chi_sg:.4f} | cv={cv:.4f} | U={binder:.4f}")
+            
         # Write results for this size L to its individual JSON file
         size_data = {
             'L': L,
@@ -196,7 +203,9 @@ def run_simulation(is_test: bool = False, force_run: bool = False):
             'q2': q2_list,
             'chi_sg': chi_sg_list,
             'cv': cv_list,
-            'parisi': last_pq_flat
+            'binder': binder_list,
+            'parisi_hists': parisi_hists,
+            'q_bins': q_bins.tolist() if q_bins is not None else []
         }
         
         with open(cache_file, 'w') as f:
@@ -213,7 +222,8 @@ def run_simulation(is_test: bool = False, force_run: bool = False):
         'L_list': [],
         'betas': betas,
         'data': {},
-        'parisi': {}
+        'parisi': {},
+        'q_bins': []
     }
     
     for fp in all_files:
@@ -238,9 +248,12 @@ def run_simulation(is_test: bool = False, force_run: bool = False):
                 plot_data['data'][L_str] = {
                     'q2': d['q2'],
                     'chi_sg': d['chi_sg'],
-                    'cv': d['cv']
+                    'cv': d['cv'],
+                    'binder': d.get('binder', [])
                 }
-                plot_data['parisi'][L_str] = d['parisi']
+                plot_data['parisi'][L_str] = d.get('parisi_hists', [])
+                if not plot_data['q_bins'] and 'q_bins' in d:
+                    plot_data['q_bins'] = d['q_bins']
         except Exception as e:
             print(f"Warning: Failed to load file {fp} for plotting: {e}")
             
@@ -268,8 +281,9 @@ def plot_results(results_dict: Dict[str, Any]):
     temps = 1.0 / betas
     data = results_dict['data']
     parisi = results_dict['parisi']
+    q_bins = np.array(results_dict['q_bins'])
     
-    Tc_exact = 1.1  # Expected critical temperature in 3D
+    Tc_exact = 1.124  # Expected critical temperature in 3D
     
     # Set premium publication-quality style parameters
     plt.rcParams.update({
@@ -285,11 +299,10 @@ def plot_results(results_dict: Dict[str, Any]):
         'grid.linestyle': '--'
     })
     
-    # Using a perceptually uniform colormap to represent size scale
     cmap = plt.get_cmap('viridis')
     colors = [cmap(i) for i in np.linspace(0.1, 0.9, len(L_list))]
     
-    fig, axs = plt.subplots(2, 2, figsize=(14, 10))
+    fig, axs = plt.subplots(2, 3, figsize=(18, 10))
     axs = axs.flatten()
     
     for i, L in enumerate(L_list):
@@ -302,23 +315,35 @@ def plot_results(results_dict: Dict[str, Any]):
         # 2. Overlap Susceptibility vs T
         axs[1].plot(temps, data[L_str]['chi_sg'], 's-', color=color, markersize=4, linewidth=1.5, label=f'L={L}')
         
-        # 3. Specific Heat vs T
-        axs[2].plot(temps, data[L_str]['cv'], '^-', color=color, markersize=4, linewidth=1.5, label=f'L={L}')
+        # 3. Binder Cumulant vs T
+        axs[2].plot(temps, data[L_str]['binder'], 'd-', color=color, markersize=4, linewidth=1.5, label=f'L={L}')
         
-        # 4. Parisi Distribution at lowest temperature
-        sns.kdeplot(
-            np.array(parisi[L_str]),
-            ax=axs[3],
-            color=color,
-            fill=True,
-            alpha=0.15,
-            label=f'L={L}'
-        )
+        # 4. Specific Heat vs T
+        axs[3].plot(temps, data[L_str]['cv'], '^-', color=color, markersize=4, linewidth=1.5, label=f'L={L}')
         
+        # 5. Parisi Distribution at lowest temperature
+        if len(parisi[L_str]) > 0:
+            lowest_temp_hist = parisi[L_str][-1]  # Highest beta is last
+            axs[4].plot(q_bins, lowest_temp_hist, '-', color=color, linewidth=2, label=f'L={L}')
+            axs[4].fill_between(q_bins, 0, lowest_temp_hist, color=color, alpha=0.15)
+        
+    # 6. Parisi Distribution Heatmap vs T (for largest L)
+    largest_L = str(L_list[-1])
+    if len(parisi[largest_L]) > 0:
+        parisi_matrix = np.array(parisi[largest_L]).T  # shape (len(q_bins), len(betas))
+        sort_idx = np.argsort(temps)
+        sorted_temps = temps[sort_idx]
+        sorted_matrix = parisi_matrix[:, sort_idx]
+        
+        T_mesh, Q_mesh = np.meshgrid(sorted_temps, q_bins)
+        c = axs[5].pcolormesh(T_mesh, Q_mesh, sorted_matrix, cmap='magma', shading='auto')
+        fig.colorbar(c, ax=axs[5], label=r'$P(q)$ Density')
+        axs[5].axvline(Tc_exact, color='cyan', linestyle=':', linewidth=2, alpha=0.8, label=r'$T_c \approx 1.124$')
+    
     # Add labels and format plots
-    for idx in range(3):
+    for idx in range(4):
         ax = axs[idx]
-        ax.axvline(Tc_exact, color='crimson', linestyle=':', linewidth=1.5, alpha=0.8, label=r'$T_c \approx 1.1$')
+        ax.axvline(Tc_exact, color='crimson', linestyle=':', linewidth=1.5, alpha=0.8, label=r'$T_c \approx 1.124$')
         ax.set_xlabel(r'$T = 1/\beta$')
         ax.grid(True, alpha=0.3)
         
@@ -328,14 +353,21 @@ def plot_results(results_dict: Dict[str, Any]):
     axs[1].set_ylabel(r'$\chi_{\rm SG} = \beta N \langle q^2 \rangle$')
     axs[1].set_title('Overlap Susceptibility')
     
-    axs[2].set_ylabel(r'$C_v$')
-    axs[2].set_title('Specific Heat')
+    axs[2].set_ylabel(r'$U = \frac{1}{2} \left(3 - \frac{\langle q^4 \rangle}{\langle q^2 \rangle^2}\right)$')
+    axs[2].set_title('Binder Cumulant')
     
-    # Format the Parisi Distribution subplot
-    axs[3].set_xlabel(r'$q$')
-    axs[3].set_ylabel(r'$P(q)$')
-    axs[3].set_title(f'Parisi Overlap Distribution at $T = {1.0/betas[-1]:.2f}$')
-    axs[3].grid(True, alpha=0.3)
+    axs[3].set_ylabel(r'$C_v$')
+    axs[3].set_title('Specific Heat')
+    
+    axs[4].set_xlabel(r'$q$')
+    axs[4].set_ylabel(r'$P(q)$')
+    axs[4].set_title(f'Parisi Overlap Distribution at $T = {1.0/betas[-1]:.2f}$')
+    axs[4].grid(True, alpha=0.3)
+    axs[4].axvline(0, color='black', linewidth=0.8, alpha=0.5)
+    
+    axs[5].set_xlabel(r'$T = 1/\beta$')
+    axs[5].set_ylabel(r'$q$')
+    axs[5].set_title(f'Evolution of P(q) vs T (L={largest_L})')
     
     # Single unified legend to avoid crowding
     handles, labels = axs[0].get_legend_handles_labels()
@@ -343,11 +375,10 @@ def plot_results(results_dict: Dict[str, Any]):
     for h, l in zip(handles, labels):
         if l not in unique_labels:
             unique_labels[l] = h
-    fig.legend(unique_labels.values(), unique_labels.keys(), loc='center right', bbox_to_anchor=(1.12, 0.5), borderaxespad=0.)
+    fig.legend(unique_labels.values(), unique_labels.keys(), loc='lower center', bbox_to_anchor=(0.5, 0.0), ncol=len(unique_labels), borderaxespad=0.)
     
-    plt.suptitle('3D Edwards-Anderson Spin Glass Observables', y=0.98, weight='bold')
-    plt.tight_layout()
-    plt.subplots_adjust(right=0.88)
+    plt.suptitle('3D Edwards-Anderson Spin Glass Observables', y=1.02, weight='bold')
+    plt.tight_layout(rect=[0, 0.05, 1, 1])
     
     os.makedirs('examples/images', exist_ok=True)
     plt.savefig('examples/images/ea_observables.png', dpi=300, bbox_inches='tight')
