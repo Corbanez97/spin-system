@@ -132,6 +132,21 @@
   - Ensure no Python-side effects break graph compilation.
 - [ ] Benchmark performance improvement from graph compilation.
 
+### 3.5 Quenched Disorder Averaging — Batched on GPU
+- [ ] Don't loop disorder samples in Python (slow, re-traces nothing parallel) — batch them the same way `lattice_replicas` is already batched, by adding a `disorder_samples` (D) axis to the interaction tensor.
+- [ ] Add a `disorder_samples` constructor param to `EdwardsAndersonSystem` and `SherringtonKirkpatrickSystem`.
+  - Generate a stacked interaction tensor of shape `(D, N, N)` via D calls to `BinaryRandomInteraction`/`GaussianInteraction.generate()` with D distinct seeds, `np.stack`ed.
+  - Keep `lattice_replicas` = `D × replicas_per_sample` (the existing flat batch axis) so `Dynamics`, `Tracker`, and disorder-agnostic measurements (`Energy`, `Magnetization`) need **zero changes** — same reason replica-parallelism was free.
+- [ ] Rewrite `compute_energy()`/`compute_delta_energy()` in both models to use a **batched matmul/gather** instead of one shared matmul:
+  - Reshape spins to `(D, R, N)`, `J` to `(D, N, N)`, contract with `tf.matmul(J, spin_transposed)` (broadcasts over the leading `D` batch dim) instead of `spin_flat @ J_flat`.
+  - Same idea for the `tf.gather` of `J` rows in `compute_delta_energy` — gather per-disorder-slice, not from one shared `J_flat`.
+- [ ] **Catch — must ship together, not as a follow-up**: `MagneticSusceptibility` and the whole Overlap family (`OverlapMatrix`, `OverlapDistribution`, `ParisiOverlapParameter`) reduce/compare *across the entire replica axis*. If `D` and `R` are silently flattened into that axis:
+  - `MagneticSusceptibility` would conflate disorder-to-disorder fluctuation into what should be a purely thermal variance (biased high).
+  - The Overlap family would compute overlaps between replicas from *different* J realizations — physically meaningless.
+  - Add disorder-aware variants that reshape back to `(D, R, ...)` and reduce/compare only within each `R` block before touching the `D` axis.
+- [ ] Combine per-disorder thermal error (5.4, jackknife over `R` within each disorder slice) with disorder-to-disorder variance (across `D`) in quadrature for the final error bar.
+- [ ] Cost is now GPU memory/compute (`O(D·N²)` for the interaction tensor, `O(D·R·N²)` per energy eval), not wall-clock multiplication from a Python loop — same tradeoff replicas already made.
+
 **How to achieve**:
 1. Start with the annealing-inside-sweep refactor — it's a TODO already flagged in the code.
 2. Wolff algorithm is the highest-impact addition for phase transition studies.
@@ -189,18 +204,27 @@
 
 ### 5.2 Autocorrelation Analysis
 - [ ] Implement integrated autocorrelation time τ_int measurement.
+- [ ] Implement binning/blocking analysis: variance of the per-bin mean vs. bin size, used to confirm the estimate has plateaued (i.e. `granularity` and burn-in actually decorrelate samples).
 - [ ] Use this to determine proper thermalization and decorrelation periods.
-- [ ] Essential for error estimation in Monte Carlo.
+- [ ] Essential for error estimation in Monte Carlo — run as a diagnostic against existing cached `Tracker.history` data before trusting any error bars built on top (5.4).
 
 ### 5.3 Visualization Toolkit
 - [ ] Standardize plotting utilities across examples.
 - [ ] Animated lattice visualization for all model types (extend the Wegner animation pattern).
-- [ ] Phase diagram plotting with error bars and finite-size scaling annotations.
+- [ ] Phase diagram plotting with error bars and finite-size scaling annotations (depends on 5.4).
+
+### 5.4 Resampling-Based Error Propagation (Jackknife/Bootstrap)
+- [ ] Implement generic `jackknife(samples, estimator_fn, axis=0)` and `bootstrap(samples, estimator_fn, n_resample, axis=0)` utilities.
+  - Resample over the `replicas` axis — each replica is already an independent thermal chain under the same quenched J, so this is free (no extra simulation).
+  - Needed because the observables we care about are nonlinear functions of primary moments (C_v = β²N(⟨E²⟩-⟨E⟩²), χ_SG = βN⟨q²⟩, Binder cumulant, Parisi parameter ⟨q²⟩-⟨|q|⟩²) — naive Gaussian error propagation through these is biased; jackknife/bootstrap handles it correctly with one implementation reused across all of them.
+- [ ] Retrofit one example first (`examples/ea_observables.py`) to emit `(value, error)` pairs instead of bare floats, and switch `plt.plot` → `plt.errorbar`.
+- [ ] Caveat: this only captures replica-sampling error, not within-chain autocorrelation (5.2) or disorder variance (5.5) — those are separate, complementary checks.
 
 **How to achieve**:
 1. Binder cumulant requires adding ⟨m²⟩ and ⟨m⁴⟩ measurements — straightforward extensions of the `Measurement` class.
-2. Autocorrelation can be computed post-hoc from `Tracker.history` data.
-3. Consider a `spin_engine.analysis` subpackage for these tools.
+2. Autocorrelation and binning can be computed post-hoc from `Tracker.history` data — pure NumPy, no `Measurement`/`Tracker` changes needed.
+3. Consider a `spin_engine.analysis` subpackage for these tools (`autocorrelation.py`, `resampling.py`) — all post-hoc on `tracker.history[name].numpy()`, so the graph-mode restrictions on `sweep()` don't apply.
+4. Suggested order: 5.2 (validate current granularity/burn-in) → 5.4 (cheap, reuses existing replica chains) → 3.5 (expensive, only once 5.4 is in place).
 
 ---
 

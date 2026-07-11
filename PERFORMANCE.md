@@ -329,6 +329,27 @@ Since `replicas` is constant, this mask should be computed once at initializatio
 
 ---
 
+### 🟣 P3 — Extreme Replica Scaling: The Memory Bandwidth Wall (Advanced)
+
+> [!TIP]
+> **Advanced Optimization**: If you push the replica axis to extreme limits ($>10^6$ replicas of small systems like $N=64$) for massive ensemble averaging, the system will hit a memory bandwidth wall. 
+
+**Where**: Memory access patterns in `tf.while_loop` and `MetropolisHastings.sweep()`.
+
+**Problem**: At $2^{21}$ replicas of $N=64$, the state requires ~5.4 GB of VRAM. While the GPU has enough space, the Monte Carlo sweep reads and writes these 5.4 GB to Global Memory (VRAM) for every step. The limited global memory bandwidth (1-3 TB/s) bottlenecks the `steps/s` throughput significantly, causing a drop in simulation speed.
+
+**Implementation approach (The Custom Kernel Fix)**:
+To regain the speed seen at smaller replica counts (which fit entirely in the ultra-fast L2 cache), the algorithm must be rewritten to utilize GPU **Shared Memory**:
+1. Write a custom CUDA kernel (or use a highly fused framework like JAX with `vmap`/`lax.scan`).
+2. Assign each replica to a single GPU Thread Block. 
+3. The block loads its entire $N=64$ state from VRAM into the SM's ultra-fast Shared Memory *once*.
+4. The block performs the entire Monte Carlo sweep (thousands of flip attempts) entirely in Shared Memory/Registers without ever touching Global Memory.
+5. Write the final state back to Global Memory only when the sweep is complete.
+
+This completely bypasses the Global Memory bottleneck and would allow millions of small replicas to simulate simultaneously at the absolute theoretical compute limit of the GPU.
+
+---
+
 ## Optimization Priority & Implementation Order
 
 | Priority | Item | Expected Impact | Complexity | Dependencies |
