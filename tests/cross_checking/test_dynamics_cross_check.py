@@ -76,13 +76,17 @@ class TestDynamicsCrossCheck:
         # New action
         @tf.function
         def run_new_flip():
-            return dynamics.flip_spins(num_flips)  # type: ignore
+            scatter_indices, updates, _, new_total_energy = dynamics.flip_spins(num_flips)
+            spin_flat = tf.reshape(new_system.spin_state, (new_system.quenched_replicas, new_system.lattice_replicas, -1))
+            new_updated_spins_flat = tf.tensor_scatter_nd_update(spin_flat, scatter_indices, updates)
+            new_updated_spins = tf.reshape(new_updated_spins_flat, new_system.spin_state.shape)
+            return new_updated_spins, new_total_energy
 
         tf.random.set_seed(seed)
-        new_updated_spins, new_total_energy = run_new_flip()  # type: ignore
+        new_updated_spins, new_total_energy = run_new_flip()
         new_energy_delta = new_total_energy - dynamics.current_energy
 
-        # Legacy returns flat spins (replicas, N), New returns (replicas, L, L)
+        # Legacy returns flat spins (replicas, N), New returns (1, replicas, L, L)
         legacy_updated_spins = tf.reshape(
             legacy_updated_spins, new_updated_spins.shape)
 

@@ -15,6 +15,7 @@ class BaseSpinSystem(tf.Module, abc.ABC):
         lattice_dim: int,
         lattice_length: int,
         lattice_replicas: int,
+        quenched_replicas: int = 1,
         initial_spin_state: Optional[Union[tf.Tensor,
                                            Callable[[], tf.Tensor]]] = None,
     ):
@@ -22,6 +23,7 @@ class BaseSpinSystem(tf.Module, abc.ABC):
         self.lattice_dim = lattice_dim
         self.lattice_length = lattice_length
         self.lattice_replicas = lattice_replicas
+        self.quenched_replicas = quenched_replicas
 
         # Derived properties
         self.shape = [lattice_length] * lattice_dim
@@ -37,7 +39,7 @@ class BaseSpinSystem(tf.Module, abc.ABC):
         Generates the initial spin state configuration.
         Must be implemented by subclasses.
         Returns:
-            tf.Tensor of shape (replicas, *shape, [components])
+            tf.Tensor of shape (quenched_replicas, lattice_replicas, *shape, [components])
         """
         pass
 
@@ -45,11 +47,11 @@ class BaseSpinSystem(tf.Module, abc.ABC):
     # @tf.function
     def compute_energy(self, spin_state: Optional[tf.Variable | tf.Tensor] = None) -> tf.Tensor:
         """
-        Computes the energy of the system for each replica.
+        Computes the energy of the system for each replica and quenched configuration.
         Args:
             spin_state: Optional tensor to compute energy for. Uses self.spin_state if None.
         Returns:
-            tf.Tensor of shape (replicas,) containing energy values.
+            tf.Tensor of shape (quenched_replicas, lattice_replicas) containing energy values.
         """
         pass
 
@@ -71,56 +73,58 @@ class BaseSpinSystem(tf.Module, abc.ABC):
         (e.g., WegnerSystem) fall back to full energy recomputation.
 
         Args:
-            spin_state: Current spin state, shape (replicas, L, ..., L).
+            spin_state: Current spin state, shape (quenched, replicas, L, ..., L).
             updated_spin_state: Proposed spin state after flipping.
-            changed_indices: Flat indices of flipped sites, shape (replicas, num_flips).
+            changed_indices: Flat indices of flipped sites, shape (quenched, replicas, num_flips).
 
         Returns:
-            tf.Tensor of shape (replicas,) — the energy difference E_new - E_old.
+            tf.Tensor of shape (quenched, replicas) — the energy difference E_new - E_old.
         """
         # Fallback for models without an interaction matrix (e.g., Wegner, TSP)
         if not hasattr(self, 'interaction_matrix'):
             return self.compute_energy(updated_spin_state) - self.compute_energy(spin_state)
 
         N = tf.cast(self.number_spins, tf.int32)
-        num_flips = tf.shape(changed_indices)[1]
+        num_flips = tf.shape(changed_indices)[2]
+        Q = self.quenched_replicas
+        R = self.lattice_replicas
 
-        # Flatten states: (replicas, N)
-        spin_flat = tf.reshape(spin_state, (self.lattice_replicas, -1))
-        updated_flat = tf.reshape(updated_spin_state, (self.lattice_replicas, -1))
+        # Flatten states: (Q, R, N)
+        spin_flat = tf.reshape(spin_state, (Q, R, N))
+        updated_flat = tf.reshape(updated_spin_state, (Q, R, N))
 
-        # Δσ at changed sites: (replicas, num_flips)
-        delta_sigma = tf.gather(updated_flat, changed_indices, batch_dims=1) \
-                    - tf.gather(spin_flat, changed_indices, batch_dims=1)
+        # Δσ at changed sites: (Q, R, num_flips)
+        delta_sigma = tf.gather(updated_flat, changed_indices, batch_dims=2) \
+                    - tf.gather(spin_flat, changed_indices, batch_dims=2)
 
-        # Flatten J: (N, N)
-        J_flat = tf.reshape(self.interaction_matrix, (N, N))
+        # Flatten J: (Q, N, N)
+        J_flat = tf.reshape(self.interaction_matrix, (Q, N, N))
 
-        # Gather J rows for all flipped sites across replicas
-        flat_idx = tf.reshape(changed_indices, [-1])               # (replicas * num_flips,)
-        J_rows = tf.gather(J_flat, flat_idx)                       # (replicas * num_flips, N)
-        J_rows = tf.reshape(J_rows, (self.lattice_replicas, num_flips, N))
+        # Gather J rows for all flipped sites across Q and R
+        flat_idx = tf.reshape(changed_indices, (Q, R * num_flips)) # (Q, R * num_flips)
+        J_rows = tf.gather(J_flat, flat_idx, batch_dims=1)         # (Q, R * num_flips, N)
+        J_rows = tf.reshape(J_rows, (Q, R, num_flips, N))
 
         # Local fields h_j = Σ_i J_ji σ_i for each changed site j
-        # spin_flat: (replicas, N) → (replicas, 1, N)
+        # spin_flat: (Q, R, N) → (Q, R, 1, N)
         h_local = tf.reduce_sum(
-            J_rows * spin_flat[:, tf.newaxis, :], axis=-1
-        )  # (replicas, num_flips)
+            J_rows * spin_flat[:, :, tf.newaxis, :], axis=-1
+        )  # (Q, R, num_flips)
 
         # Term 1: -Σ_j Δσ_j h_j
-        term1 = -tf.reduce_sum(delta_sigma * h_local, axis=-1)  # (replicas,)
+        term1 = -tf.reduce_sum(delta_sigma * h_local, axis=-1)  # (Q, R)
 
         # Term 2: -½ Σ_{i,j∈D} J_ij Δσ_i Δσ_j (self-interaction correction)
         # For single-site flips with J_nn = 0 this vanishes, but we compute it
         # for correctness with multi-site flips.
-        # Gather the sub-matrix J[D, D]: (replicas, num_flips, num_flips)
+        # Gather the sub-matrix J[D, D]: (Q, R, num_flips, num_flips)
         # Build column gather from J_rows at the changed indices
-        J_sub = tf.gather(J_rows, changed_indices, batch_dims=1, axis=2)  # (replicas, num_flips, num_flips)
-        # Δσ: (replicas, num_flips) → (replicas, num_flips, 1) and (replicas, 1, num_flips)
+        J_sub = tf.gather(J_rows, changed_indices, batch_dims=2, axis=3)  # (Q, R, num_flips, num_flips)
+        # Δσ: (Q, R, num_flips) → (Q, R, num_flips, 1) and (Q, R, 1, num_flips)
         term2 = -0.5 * tf.reduce_sum(
-            delta_sigma[:, :, tf.newaxis] * J_sub * delta_sigma[:, tf.newaxis, :],
+            delta_sigma[:, :, :, tf.newaxis] * J_sub * delta_sigma[:, :, tf.newaxis, :],
             axis=[-2, -1]
-        )  # (replicas,)
+        )  # (Q, R)
 
         return term1 + term2
 

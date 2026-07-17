@@ -22,7 +22,10 @@ class Energy(Measurement):
             raise ValueError(
                 "Energy computation requires a system (Hamiltonian logic).")
 
-        return sys.compute_energy(state)
+        energy = sys.compute_energy(state)
+        if sys.quenched_replicas == 1:
+            return tf.squeeze(energy, axis=0)
+        return energy
 
 
 class Magnetization(Measurement):
@@ -38,10 +41,17 @@ class Magnetization(Measurement):
         state, sys = self._resolve(spin_state, system)
 
         # Resolve replicas: System metadata > Tensor shape
-        replicas = sys.lattice_replicas if sys else state.shape[0]
+        Q = sys.quenched_replicas if sys else state.shape[0]
+        R = sys.lattice_replicas if sys else state.shape[1]
 
-        flat_state = tf.reshape(state, (replicas, -1))
-        return tf.reduce_mean(flat_state, axis=1)
+        flat_state = tf.reshape(state, (Q, R, -1))
+        mag = tf.reduce_mean(flat_state, axis=2)
+        
+        if sys and sys.quenched_replicas == 1:
+            return tf.squeeze(mag, axis=0)
+        elif not sys and Q == 1:
+            return tf.squeeze(mag, axis=0)
+        return mag
 
 
 class MagneticSusceptibility(Measurement):
@@ -56,12 +66,18 @@ class MagneticSusceptibility(Measurement):
 
         state, sys = self._resolve(spin_state, system)
 
-        replicas = sys.lattice_replicas if sys else state.shape[0]
+        Q = sys.quenched_replicas if sys else state.shape[0]
+        R = sys.lattice_replicas if sys else state.shape[1]
 
-        flat_state = tf.reshape(state, (replicas, -1))
-        m_per_replica = tf.reduce_mean(flat_state, axis=1)
-
-        return tf.math.reduce_variance(m_per_replica)
+        flat_state = tf.reshape(state, (Q, R, -1))
+        m_per_replica = tf.reduce_mean(flat_state, axis=2)
+        suscep = tf.math.reduce_variance(m_per_replica, axis=1)
+        
+        if sys and sys.quenched_replicas == 1:
+            return tf.squeeze(suscep, axis=0)
+        elif not sys and Q == 1:
+            return tf.squeeze(suscep, axis=0)
+        return suscep
 
 
 class SpinGlassOrderParameter(Measurement):
@@ -93,10 +109,13 @@ class SpinGlassOrderParameter(Measurement):
 
         s_avg = self.spin_sum / self.count
         
-        axes_to_reduce = tf.range(1, tf.rank(s_avg))
+        axes_to_reduce = tf.range(2, tf.rank(s_avg))
         q_ea_per_replica = tf.reduce_mean(tf.square(s_avg), axis=axes_to_reduce)
+        q_ea = tf.reduce_mean(q_ea_per_replica, axis=1)
 
-        return tf.reduce_mean(q_ea_per_replica)
+        if sys and sys.quenched_replicas == 1:
+            return tf.squeeze(q_ea, axis=0)
+        return q_ea
 
     def reset(self):
         """Reset the accumulation variables to start a new measurement period."""

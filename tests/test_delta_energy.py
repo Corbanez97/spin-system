@@ -30,19 +30,25 @@ from spin_engine.measurements.base import Measurement
 
 def _flip_and_get_indices(system, num_flips=1):
     """Helper: flip random spins and return (updated_state, indices)."""
+    Q = system.quenched_replicas
+    R = system.lattice_replicas
     spin_flat = tf.reshape(system.spin_state,
-                           (system.lattice_replicas, -1))
+                           (Q, R, -1))
 
     # Generate unique indices for each replica using top_k to prevent duplicates
     num_spins_int = tf.cast(system.number_spins, tf.int32)
-    random_vals = tf.random.uniform((system.lattice_replicas, num_spins_int))
+    random_vals = tf.random.uniform((Q, R, num_spins_int))
     _, idx = tf.math.top_k(random_vals, k=num_flips)
     idx = tf.cast(idx, tf.int32)
 
-    replica_idx = tf.repeat(
-        tf.range(system.lattice_replicas)[:, None], num_flips, axis=1)
-    scatter_indices = tf.stack([replica_idx, idx], axis=-1)
-    scatter_indices = tf.reshape(scatter_indices, (-1, 2))
+    q_idx = tf.repeat(tf.range(Q)[:, None, None], R, axis=1)
+    q_idx = tf.repeat(q_idx, num_flips, axis=2)
+
+    r_idx = tf.repeat(tf.range(R)[None, :, None], Q, axis=0)
+    r_idx = tf.repeat(r_idx, num_flips, axis=2)
+
+    scatter_indices = tf.stack([q_idx, r_idx, idx], axis=-1)
+    scatter_indices = tf.reshape(scatter_indices, (-1, 3))
 
     updates = tf.reshape(
         -tf.gather_nd(spin_flat, scatter_indices), [-1])
@@ -141,7 +147,7 @@ class TestDeltaEnergyEA:
     def test_single_flip_2d(self):
         """ΔE matches for EA model in 2D."""
         L, D, R = 4, 2, 8
-        J = BinaryRandomInteraction(seed=42).generate(D, L)
+        J = BinaryRandomInteraction(seed=42).generate(D, L, quenched=1)
         system = EdwardsAndersonSystem(
             lattice_length=L, lattice_replicas=R,
             interaction_matrix=J, lattice_dim=D
@@ -160,7 +166,7 @@ class TestDeltaEnergyEA:
     def test_single_flip_3d(self):
         """ΔE matches for EA model in 3D."""
         L, D, R = 4, 3, 4
-        J = BinaryRandomInteraction(seed=42).generate(D, L)
+        J = BinaryRandomInteraction(seed=42).generate(D, L, quenched=1)
         system = EdwardsAndersonSystem(
             lattice_length=L, lattice_replicas=R,
             interaction_matrix=J, lattice_dim=D
@@ -179,7 +185,7 @@ class TestDeltaEnergyEA:
     def test_gaussian_couplings(self):
         """ΔE works with Gaussian random couplings."""
         L, D, R = 4, 2, 4
-        J = GaussianInteraction(seed=42).generate(D, L)
+        J = GaussianInteraction(seed=42).generate(D, L, quenched=1)
         system = EdwardsAndersonSystem(
             lattice_length=L, lattice_replicas=R,
             interaction_matrix=J, lattice_dim=D
@@ -223,23 +229,29 @@ class TestDeltaEnergySpherical:
 
     def _perturb_sites(self, system, num_perturb=1):
         """Helper: perturb random continuous spins and return (updated, indices)."""
+        Q = system.quenched_replicas
+        R = system.lattice_replicas
         spin_flat = tf.reshape(system.spin_state,
-                               (system.lattice_replicas, -1))
+                               (Q, R, -1))
 
         idx = tf.random.uniform(
-            shape=(system.lattice_replicas, num_perturb),
+            shape=(Q, R, num_perturb),
             maxval=tf.cast(system.number_spins, tf.int32),
             dtype=tf.int32
         )
 
         # Apply a random perturbation at the selected sites
-        replica_idx = tf.repeat(
-            tf.range(system.lattice_replicas)[:, None], num_perturb, axis=1)
-        scatter_indices = tf.stack([replica_idx, idx], axis=-1)
-        scatter_indices = tf.reshape(scatter_indices, (-1, 2))
+        q_idx = tf.repeat(tf.range(Q)[:, None, None], R, axis=1)
+        q_idx = tf.repeat(q_idx, num_perturb, axis=2)
+
+        r_idx = tf.repeat(tf.range(R)[None, :, None], Q, axis=0)
+        r_idx = tf.repeat(r_idx, num_perturb, axis=2)
+
+        scatter_indices = tf.stack([q_idx, r_idx, idx], axis=-1)
+        scatter_indices = tf.reshape(scatter_indices, (-1, 3))
 
         perturbation = tf.random.normal(
-            shape=(system.lattice_replicas * num_perturb,))
+            shape=(Q * R * num_perturb,))
         new_values = tf.gather_nd(spin_flat, scatter_indices) + perturbation
 
         updated_flat = tf.tensor_scatter_nd_update(
@@ -300,15 +312,19 @@ class TestDeltaEnergyWegner:
 
         old_energy = system.compute_energy()
 
+        Q = system.quenched_replicas
+        R = system.lattice_replicas
         # Flip a random link (treat as flat)
-        spin_flat = tf.reshape(system.spin_state, (R, -1))
-        total_elements = tf.shape(spin_flat)[1]
+        spin_flat = tf.reshape(system.spin_state, (Q, R, -1))
+        total_elements = tf.shape(spin_flat)[2]
         idx = tf.random.uniform(
-            shape=(R, 1), maxval=total_elements, dtype=tf.int32)
+            shape=(Q, R, 1), maxval=total_elements, dtype=tf.int32)
 
-        replica_idx = tf.range(R)[:, None]
+        q_idx = tf.repeat(tf.range(Q)[:, None, None], R, axis=1)
+        r_idx = tf.repeat(tf.range(R)[None, :, None], Q, axis=0)
+
         scatter_indices = tf.reshape(
-            tf.stack([replica_idx, idx], axis=-1), (-1, 2))
+            tf.stack([q_idx, r_idx, idx], axis=-1), (-1, 3))
         updates = -tf.gather_nd(spin_flat, scatter_indices)
         updated_flat = tf.tensor_scatter_nd_update(
             spin_flat, scatter_indices, tf.reshape(updates, [-1]))
@@ -411,7 +427,7 @@ class TestDeltaEnergyEndToEnd:
     def test_ea_sweep_energy_consistency(self):
         """EA model energy tracking through a sweep."""
         L, D, R = 4, 3, 4
-        J = BinaryRandomInteraction(seed=42).generate(D, L)
+        J = BinaryRandomInteraction(seed=42).generate(D, L, quenched=1)
         system = EdwardsAndersonSystem(
             lattice_length=L, lattice_replicas=R,
             interaction_matrix=J, lattice_dim=D

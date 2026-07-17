@@ -97,14 +97,14 @@ class TestInteractions:
         D = 1
         L = 10
         interaction = GaussianInteraction(mean=0.0, std=1.0, seed=42)
-        J1 = interaction.generate(D, L)
-        J2 = interaction.generate(D, L)
+        J1 = interaction.generate(D, L, quenched=1)
+        J2 = interaction.generate(D, L, quenched=1)
 
         # Consistency with seed
         np.testing.assert_array_equal(J1, J2)
 
         # Symmetry J_ij = J_ji
-        np.testing.assert_array_equal(J1, J1.T)
+        np.testing.assert_array_equal(J1, np.transpose(J1, (0, 2, 1)))
 
         # Zero diagonal
-        np.testing.assert_equal(np.diag(J1), np.zeros(10))
+        np.testing.assert_equal(np.diag(J1[0]), np.zeros(10))

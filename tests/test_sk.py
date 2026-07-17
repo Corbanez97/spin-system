@@ -30,7 +30,7 @@ def test_sk_system_initialization():
     assert system.number_spins == num_spins
     
     # Check spin state shape
-    assert system.spin_state.shape == (lattice_replicas, num_spins)
+    assert system.spin_state.shape == (1, lattice_replicas, num_spins)
     
     # Check interaction matrix shape
     assert system.interaction_matrix.shape == (num_spins, num_spins)
@@ -63,7 +63,7 @@ def test_sk_energy_computation():
     )
     
     energies = system.compute_energy()
-    assert energies.shape == (4,)
+    assert energies.shape == (1, 4)
     
     # The energy shouldn't be nan or infinity
     assert not np.any(np.isnan(energies.numpy()))

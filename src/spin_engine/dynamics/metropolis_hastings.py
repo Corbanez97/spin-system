@@ -24,18 +24,26 @@ class MetropolisHastings(Dynamics):
         Propose spin flips without creating a new full state tensor.
         Returns: scatter_indices, updates, original_spins, updated_energy
         """
+        Q = self.system.quenched_replicas
+        R = self.system.lattice_replicas
+
         spin_flat = tf.reshape(self.system.spin_state,
-                               (self.system.lattice_replicas, -1))
+                               (Q, R, -1))
 
         idx = tf.random.uniform(
-            shape=(self.system.lattice_replicas, num_flips),
+            shape=(Q, R, num_flips),
             maxval=tf.cast(self.system.number_spins, tf.int32),
             dtype=tf.int32
         )
-        replica_idx = tf.repeat(tf.range(self.system.lattice_replicas)[
-                                :, None], num_flips, axis=1)
-        scatter_indices = tf.stack([replica_idx, idx], axis=-1)
-        scatter_indices = tf.reshape(scatter_indices, (-1, 2))
+        
+        q_idx = tf.repeat(tf.range(Q)[:, None, None], R, axis=1)
+        q_idx = tf.repeat(q_idx, num_flips, axis=2)
+
+        r_idx = tf.repeat(tf.range(R)[None, :, None], Q, axis=0)
+        r_idx = tf.repeat(r_idx, num_flips, axis=2)
+
+        scatter_indices = tf.stack([q_idx, r_idx, idx], axis=-1)
+        scatter_indices = tf.reshape(scatter_indices, (-1, 3))
 
         original_spins = tf.gather_nd(spin_flat, scatter_indices)
         updates = tf.reshape(-original_spins, [-1])
@@ -50,7 +58,7 @@ class MetropolisHastings(Dynamics):
     def _disturb_state(self, num_disturbances: tf.Tensor, theta_max: Optional[tf.Tensor]) -> Tuple[tf.Variable | tf.Tensor, tf.Variable | tf.Tensor]:
         if theta_max is None:
             scatter_indices, updates, _, updated_energy = self.flip_spins(num_disturbances)
-            spin_flat = tf.reshape(self.system.spin_state, (self.system.lattice_replicas, -1))
+            spin_flat = tf.reshape(self.system.spin_state, (self.system.quenched_replicas, self.system.lattice_replicas, -1))
             updated = tf.tensor_scatter_nd_update(spin_flat, scatter_indices, updates)
             updated = tf.reshape(updated, self.system.spin_state.shape)
             return updated, updated_energy
@@ -73,13 +81,18 @@ class MetropolisHastings(Dynamics):
             energy_delta = tf.math.subtract(updated_energy, self.current_energy)
             prob_accept = tf.exp(-tf.multiply(beta, energy_delta))
             random_vals = tf.random.uniform(
-                shape=(self.system.lattice_replicas,), dtype=tf.float32)
+                shape=(self.system.quenched_replicas, self.system.lattice_replicas), dtype=tf.float32)
             accept = tf.logical_or(
                 tf.less(energy_delta, 0.0),
                 random_vals < prob_accept
             )
+            
+            accept_reshaped = accept
+            for _ in range(len(self.system.spin_state.shape) - 2):
+                accept_reshaped = tf.expand_dims(accept_reshaped, -1)
+                
             new_spin_state = tf.where(
-                tf.reshape(accept, (-1,) + (1,) * self.system.lattice_dim),
+                accept_reshaped,
                 updated,
                 self.system.spin_state
             )
@@ -96,19 +109,19 @@ class MetropolisHastings(Dynamics):
         prob_accept = tf.exp(-tf.multiply(beta, energy_delta))
 
         random_vals = tf.random.uniform(
-            shape=(self.system.lattice_replicas,), dtype=tf.float32)
+            shape=(self.system.quenched_replicas, self.system.lattice_replicas), dtype=tf.float32)
 
         accept = tf.logical_or(
             tf.less(energy_delta, 0.0),
             random_vals < prob_accept
         )
 
-        accept_expanded = tf.repeat(accept, num_disturbances)
+        accept_expanded = tf.repeat(tf.reshape(accept, [-1]), num_disturbances)
         
         # Select updates only if accepted, otherwise keep original
         final_updates = tf.where(accept_expanded, updates, tf.reshape(original_spins, [-1]))
 
-        spin_flat = tf.reshape(self.system.spin_state, (self.system.lattice_replicas, -1))
+        spin_flat = tf.reshape(self.system.spin_state, (self.system.quenched_replicas, self.system.lattice_replicas, -1))
         new_spin_state = tf.tensor_scatter_nd_update(
             spin_flat, scatter_indices, final_updates)
         new_spin_state = tf.reshape(new_spin_state, self.system.spin_state.shape)

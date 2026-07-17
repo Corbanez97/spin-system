@@ -8,7 +8,7 @@ from spin_engine.interactions.standard import BinaryRandomInteraction
 
 def test_binary_random_interaction():
     interaction = BinaryRandomInteraction(J=2.0, seed=42)
-    J_tensor = interaction.generate(D=2, L=2)
+    J_tensor = interaction.generate(D=2, L=2, quenched=1)
     J_flat = J_tensor.reshape((4, 4))
     
     # Check symmetric
@@ -36,7 +36,7 @@ def test_edwards_anderson_energy():
         [ 1, -1,  1,  0]
     ], dtype=np.float32)
     
-    J_tensor = J_matrix_flat.reshape((L, L, L, L))
+    J_tensor = J_matrix_flat.reshape((1, L, L, L, L))
     
     system = EdwardsAndersonSystem(
         lattice_length=L,
@@ -53,10 +53,10 @@ def test_edwards_anderson_energy():
     spins_1 = np.array([1, -1, 1, -1], dtype=np.float32)
     
     spin_state_flat = np.stack([spins_0, spins_1])
-    spin_state = tf.convert_to_tensor(spin_state_flat.reshape((2, L, L)))
+    spin_state = tf.convert_to_tensor(spin_state_flat.reshape((1, 2, L, L)))
     system.update_state(spin_state)
     
     energies = system.compute_energy()
     
-    expected_energies = np.array([-2.0, 6.0], dtype=np.float32)
+    expected_energies = np.array([[-2.0, 6.0]], dtype=np.float32)
     np.testing.assert_allclose(energies.numpy(), expected_energies)

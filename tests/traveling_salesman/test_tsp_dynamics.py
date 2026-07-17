@@ -57,8 +57,8 @@ class TestTSPDynamics:
 
         spin_state = system.spin_state
         binary_state = tf.divide(tf.add(spin_state, 1.0), 2.0)
-        row_sums = tf.reduce_sum(binary_state, axis=2)
-        col_sums = tf.reduce_sum(binary_state, axis=1)
+        row_sums = tf.reduce_sum(binary_state, axis=3)
+        col_sums = tf.reduce_sum(binary_state, axis=2)
 
         tf.debugging.assert_near(row_sums, tf.ones_like(row_sums), atol=1e-5)
         tf.debugging.assert_near(col_sums, tf.ones_like(col_sums), atol=1e-5)

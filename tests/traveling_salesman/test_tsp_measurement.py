@@ -43,8 +43,8 @@ class TestTSPMeasurements:
 
         energy = system.compute_energy()
 
-        assert energy.shape == (1,)
+        assert energy.shape == (1, 1)
 
-        assert energy[0] > 0.0  # type: ignore
+        assert energy[0, 0] > 0.0  # type: ignore
 
-        assert tf.math.is_finite(energy[0])  # type: ignore
+        assert tf.math.is_finite(energy[0, 0])  # type: ignore

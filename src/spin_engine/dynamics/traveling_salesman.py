@@ -40,46 +40,47 @@ class TravelingSalesmanDynamics(Dynamics):
         """
         L = self.system.lattice_length
         R = self.system.lattice_replicas
+        Q = self.system.quenched_replicas
 
         # --- 1. Identify Segment Bounds ---
         # Generate random noise and pick top 2 indices to ensure they are distinct
-        rand_noise = tf.random.uniform((R, L), dtype=tf.float32)
-        # Shape: (R, 2)
-        random_indices = tf.argsort(rand_noise, axis=1)[:, :2]
+        rand_noise = tf.random.uniform((Q, R, L), dtype=tf.float32)
+        # Shape: (Q, R, 2)
+        random_indices = tf.argsort(rand_noise, axis=2)[:, :, :2]
 
         # Sort them so we strictly have start < end
-        start = tf.reduce_min(random_indices, axis=1)  # Shape: (R,)
-        end = tf.reduce_max(random_indices, axis=1)   # Shape: (R,)
+        start = tf.reduce_min(random_indices, axis=2)  # Shape: (Q, R)
+        end = tf.reduce_max(random_indices, axis=2)   # Shape: (Q, R)
 
         # --- 2. Build Permutation Map ---
         # We need to create a map where indices inside [start, end] are reversed.
         # Logic: if index k is in [start, end], new_index = start + end - k
 
         # Create a grid of indices [0, 1, ..., L-1] for every replica
-        # Shape: (1, L) -> broadcastable to (R, L)
-        indices = tf.range(L, dtype=tf.int32)[None, :]
+        # Shape: (1, 1, L) -> broadcastable to (Q, R, L)
+        indices = tf.range(L, dtype=tf.int32)[None, None, :]
 
         # Create Boolean Mask for the segment
-        # Shape: (R, L)
+        # Shape: (Q, R, L)
         # mask is True if index is inside the chosen segment
-        mask = (indices >= start[:, None]) & (indices <= end[:, None])
+        mask = (indices >= start[:, :, None]) & (indices <= end[:, :, None])
 
         # Calculate the reversed indices
         # The math: (start + end) - current_index flips the range [start, end]
         sum_bounds = start + end
-        reversed_indices = sum_bounds[:, None] - indices
+        reversed_indices = sum_bounds[:, :, None] - indices
 
         # Select: If in mask, use reversed index; otherwise keep original index
         final_indices = tf.where(mask, reversed_indices, indices)
 
         # --- 3. Create New State ---
         # Use gather to apply the permutation to the columns (time steps)
-        # axis=2 is columns
+        # axis=3 is columns
         new_state = tf.gather(
             self.system.spin_state,
             final_indices,
-            axis=2,
-            batch_dims=1
+            axis=3,
+            batch_dims=2
         )
 
         # --- 4. Compute Energy of New State ---
@@ -96,57 +97,49 @@ class TravelingSalesmanDynamics(Dynamics):
         """
         L = self.system.lattice_length
         R = self.system.lattice_replicas
+        Q = self.system.quenched_replicas
 
         # --- 1. Identify Columns to Swap ---
         # We need two distinct random indices (columns) per replica.
         # Generating random noise and sorting it gives us a shuffled list of indices.
-        rand_noise = tf.random.uniform((R, L), dtype=tf.float32)
-        shuffled_indices = tf.argsort(rand_noise, axis=1)
+        rand_noise = tf.random.uniform((Q, R, L), dtype=tf.float32)
+        shuffled_indices = tf.argsort(rand_noise, axis=2)
 
         # Pick the first two indices as the columns to swap
-        # col_a: The index of the first column
-        # col_b: The index of the second column
-        col_a = shuffled_indices[:, 0]  # Shape: (R,)
-        col_b = shuffled_indices[:, 1]  # Shape: (R,)
+        col_a = shuffled_indices[:, :, 0]  # Shape: (Q, R)
+        col_b = shuffled_indices[:, :, 1]  # Shape: (Q, R)
 
         # --- 2. Build Permutation Map ---
         # We start with identity mapping: [0, 1, 2, ..., L-1]
         base_indices = tf.tile(
-            tf.expand_dims(tf.range(L, dtype=tf.int32), 0),
-            [R, 1]
-        )  # Shape: (R, L)
+            tf.expand_dims(tf.expand_dims(tf.range(L, dtype=tf.int32), 0), 0),
+            [Q, R, 1]
+        )  # Shape: (Q, R, L)
 
-        # We construct indices for scatter update to swap positions in the map.
-        # We want the gather map at 'col_a' to point to 'col_b' and vice versa.
+        q_range = tf.range(Q, dtype=tf.int32)
+        r_range = tf.range(R, dtype=tf.int32)
+        qq, rr = tf.meshgrid(q_range, r_range, indexing='ij')
 
-        batch_range = tf.range(R, dtype=tf.int32)
+        coords_a = tf.stack([tf.reshape(qq, [-1]), tf.reshape(rr, [-1]), tf.reshape(tf.cast(col_a, tf.int32), [-1])], axis=1)
+        coords_b = tf.stack([tf.reshape(qq, [-1]), tf.reshape(rr, [-1]), tf.reshape(tf.cast(col_b, tf.int32), [-1])], axis=1)
 
-        # Coordinates to update in the index map: [[r, col_a], [r, col_b]]
-        coords_a = tf.stack([batch_range, tf.cast(col_a, tf.int32)], axis=1)
-        coords_b = tf.stack([batch_range, tf.cast(col_b, tf.int32)], axis=1)
+        scatter_indices = tf.concat([coords_a, coords_b], axis=0)  # Shape: (2*Q*R, 3)
 
-        scatter_indices = tf.concat(
-            [coords_a, coords_b], axis=0)  # Shape: (2*R, 2)
-
-        # The values to insert:
-        # At position col_a, we put value col_b
-        # At position col_b, we put value col_a
         updates = tf.concat([
-            tf.cast(col_b, dtype=tf.int32),
-            tf.cast(col_a, dtype=tf.int32)
+            tf.reshape(tf.cast(col_b, dtype=tf.int32), [-1]),
+            tf.reshape(tf.cast(col_a, dtype=tf.int32), [-1])
         ], axis=0)
 
         # Apply the swap to the permutation map
-        # If map was [0, 1, 2] and we swap 0 and 2 -> [2, 1, 0]
         perm_map = tf.tensor_scatter_nd_update(
             base_indices, scatter_indices, updates)
 
         # --- 3. Create New State ---
         # Use gather to permute the columns of the existing state
-        # axis=2 is columns (Time steps)
-        # batch_dims=1 allows different permutations per replica
+        # axis=3 is columns (Time steps)
+        # batch_dims=2 allows different permutations per replica
         new_state = tf.gather(self.system.spin_state,
-                              perm_map, axis=2, batch_dims=1)
+                              perm_map, axis=3, batch_dims=2)
 
         # --- 4. Compute Energy of New State ---
         new_energy = self.system.compute_energy(new_state)
@@ -191,7 +184,7 @@ class TravelingSalesmanDynamics(Dynamics):
         prob_accept = tf.exp(-tf.multiply(beta, energy_delta))
 
         random_vals = tf.random.uniform(
-            shape=(self.system.lattice_replicas,), dtype=tf.float32
+            shape=(self.system.quenched_replicas, self.system.lattice_replicas), dtype=tf.float32
         )
 
         # Accept if Improvement (delta < 0) OR Random < Probability
@@ -202,7 +195,7 @@ class TravelingSalesmanDynamics(Dynamics):
 
         # Create the new state tensor based on acceptance
         # Shape broadcasting is required for the mask
-        accept_mask = tf.reshape(accept, (-1, 1, 1))  # (Replicas, 1, 1)
+        accept_mask = tf.reshape(accept, (self.system.quenched_replicas, self.system.lattice_replicas, 1, 1))  # (Q, R, 1, 1)
 
         new_spin_state = tf.where(
             accept_mask,

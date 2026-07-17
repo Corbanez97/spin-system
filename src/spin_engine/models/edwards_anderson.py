@@ -7,12 +7,12 @@ from .base import BaseSpinSystem
 class EdwardsAndersonSystem(BaseSpinSystem):
     """
     Edwards-Anderson Model for Spin Glass Systems.
-    
+
     This model implements discrete Ising spins ({-1, 1}) on a d-dimensional lattice
     with quenched random couplings (J_ij). The energy computation handles an arbitrary 
     interaction matrix, which represents the disorder and frustration inherent in 
     spin glass systems.
-    
+
     Args:
         lattice_length (int): The size of each dimension in the lattice.
         lattice_replicas (int): The number of independent replicas to simulate in parallel.
@@ -24,14 +24,17 @@ class EdwardsAndersonSystem(BaseSpinSystem):
         initial_spin_state (Optional[Union[tf.Tensor, Callable[[], tf.Tensor]]], optional):
             Pre-defined spin states to initialize with. Defaults to None.
     """
+
     def __init__(
         self,
         lattice_length: int,
         lattice_replicas: int,
         interaction_matrix: Union[tf.Tensor, np.ndarray],
+        quenched_variable_replicas: int = 1,
         initial_magnetization: float = 0.5,
         lattice_dim: int = 2,
-        initial_spin_state: Optional[Union[tf.Tensor, Callable[[], tf.Tensor]]] = None,
+        initial_spin_state: Optional[Union[tf.Tensor,
+                                           Callable[[], tf.Tensor]]] = None,
     ):
         self.initial_magnetization = initial_magnetization
 
@@ -39,12 +42,13 @@ class EdwardsAndersonSystem(BaseSpinSystem):
             lattice_dim=lattice_dim,
             lattice_length=lattice_length,
             lattice_replicas=lattice_replicas,
+            quenched_replicas=quenched_variable_replicas,
             initial_spin_state=initial_spin_state
         )
 
         self.interaction_matrix = self._validate_tensor_shape(
             interaction_matrix,
-            expected_shape=tuple(self.shape + self.shape),
+            expected_shape=(self.quenched_replicas,) + tuple(self.shape + self.shape),
             name="Interaction matrix",
         )
 
@@ -55,7 +59,7 @@ class EdwardsAndersonSystem(BaseSpinSystem):
         p_up = 0.5 + 0.5 * tf.tanh(self.initial_magnetization)
 
         # Generate random values for all replicas
-        full_shape = [self.lattice_replicas] + self.shape
+        full_shape = [self.quenched_replicas, self.lattice_replicas] + self.shape
         rand_vals = tf.random.uniform(full_shape, dtype=tf.float32)
 
         spin_state = tf.cast(rand_vals < p_up, tf.float32)
@@ -68,19 +72,22 @@ class EdwardsAndersonSystem(BaseSpinSystem):
         if spin_state is None:
             spin_state = self.spin_state
 
-        # Flatten spins: (replicas, N)
-        spin_state_flat = tf.reshape(spin_state, (self.lattice_replicas, -1))
+        Q = self.quenched_replicas
+        R = self.lattice_replicas
 
-        # Flatten interaction matrix: (N, N)
+        # Flatten spins: (Q, R, N)
+        spin_state_flat = tf.reshape(spin_state, (Q, R, -1))
+
+        # Flatten interaction matrix: (Q, N, N)
         interaction_matrix_flat = tf.reshape(
-            self.interaction_matrix, (self.number_spins, self.number_spins)
+            self.interaction_matrix, (Q, self.number_spins, self.number_spins)
         )
 
         # E = -0.5 * S^T J S
-        # Compute h_local = S @ J  --> shape (replicas, N)
-        h_local = tf.matmul(spin_state_flat, interaction_matrix_flat)
+        # Compute h_local = S @ J  --> shape (Q, R, N)
+        h_local = tf.einsum('qrn,qnm->qrm', spin_state_flat, interaction_matrix_flat)
 
-        pairwise = -0.5 * tf.reduce_sum(spin_state_flat * h_local, axis=1)
+        pairwise = -0.5 * tf.reduce_sum(spin_state_flat * h_local, axis=2)
 
         return pairwise
 
@@ -108,39 +115,39 @@ class EdwardsAndersonSystem(BaseSpinSystem):
             tf.Tensor of shape (replicas,) — the energy difference E_new - E_old.
         """
         N = tf.cast(self.number_spins, tf.int32)
-        num_flips = tf.shape(changed_indices)[1]
+        num_flips = tf.shape(changed_indices)[2]
+        Q = self.quenched_replicas
+        R = self.lattice_replicas
 
-        # Flatten spins: (replicas, N)
-        spin_flat = tf.reshape(spin_state, (self.lattice_replicas, -1))
+        # Flatten spins: (Q, R, N)
+        spin_flat = tf.reshape(spin_state, (Q, R, -1))
 
-        # Flatten J: (N, N)
-        J_flat = tf.reshape(self.interaction_matrix, (N, N))
+        # Flatten J: (Q, N, N)
+        J_flat = tf.reshape(self.interaction_matrix, (Q, N, N))
 
         # Gather J rows for flipped sites
-        flat_idx = tf.reshape(changed_indices, [-1])
-        J_rows = tf.gather(J_flat, flat_idx)
-        J_rows = tf.reshape(J_rows, (self.lattice_replicas, num_flips, N))
+        flat_idx = tf.reshape(changed_indices, (Q, R * num_flips))
+        J_rows = tf.gather(J_flat, flat_idx, batch_dims=1)
+        J_rows = tf.reshape(J_rows, (Q, R, num_flips, N))
 
         # Local fields h_n = Σ_j J_{nj} σ_j
         h_local = tf.reduce_sum(
-            J_rows * spin_flat[:, tf.newaxis, :], axis=-1
-        )  # (replicas, num_flips)
+            J_rows * spin_flat[:, :, tf.newaxis, :], axis=-1
+        )  # (Q, R, num_flips)
 
         # Spin values at flipped sites
-        s_flipped = tf.gather(spin_flat, changed_indices, batch_dims=1)
+        s_flipped = tf.gather(spin_flat, changed_indices, batch_dims=2)
 
         # Term 1: Σ_k 2 * σ_{n_k} * h_{n_k}
         term1 = tf.reduce_sum(
             2.0 * s_flipped * h_local, axis=-1
-        )  # (replicas,)
+        )  # (Q, R)
 
         # Term 2: Cross-term for multi-site flips
-        # -½ Σ_{i,j∈D} J_ij Δσ_i Δσ_j where Δσ = -2σ
-        # = -2 Σ_{i,j∈D} J_ij σ_i σ_j
-        J_sub = tf.gather(J_rows, changed_indices, batch_dims=1, axis=2)
+        J_sub = tf.gather(J_rows, changed_indices, batch_dims=2, axis=3)
         term2 = -2.0 * tf.reduce_sum(
-            s_flipped[:, :, tf.newaxis] * J_sub * s_flipped[:, tf.newaxis, :],
+            s_flipped[:, :, :, tf.newaxis] * J_sub * s_flipped[:, :, tf.newaxis, :],
             axis=[-2, -1]
-        )  # (replicas,)
+        )  # (Q, R)
 
         return term1 + term2

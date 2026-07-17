@@ -47,9 +47,11 @@ class TestDynamics:
 
         num_flips = cast(tf.Tensor, tf.constant(1))
 
-        # We need to capture which spins were flipped to verify exact sign change
-        # The current API returns proposed_spin_state, energy_delta
-        proposed_spin_state, _ = simulation.flip_spins(num_flips=num_flips)
+        # The current API returns scatter_indices, updates, original_spins, updated_energy
+        # but the step logic handles the state update internally. We just test the math.
+        scatter_indices, updates, _, _ = simulation.flip_spins(num_flips=num_flips)
+        proposed_spin_state = tf.tensor_scatter_nd_update(tf.reshape(initial_spins, (1, replicas, -1)), scatter_indices, updates)
+        proposed_spin_state = tf.reshape(proposed_spin_state, initial_spins.shape)
 
         # Check that exactly num_flips * replicas spins changed
         # Since we use -1/1 spins, changed spins will have product -1, unchanged 1
@@ -94,8 +96,13 @@ class TestDynamics:
         initial_energy = simulation.current_energy
         num_flips = cast(tf.Tensor, tf.constant(1))
 
-        proposed_spin_state, new_energy = simulation.flip_spins(
-            num_flips=num_flips)
+        scatter_indices, updates, _, _ = simulation.flip_spins(num_flips=num_flips)
+        proposed_spin_state = tf.tensor_scatter_nd_update(tf.reshape(ising_system.spin_state, (1, lattice_replicas, -1)), scatter_indices, updates)
+        proposed_spin_state = tf.reshape(proposed_spin_state, ising_system.spin_state.shape)
+        
+        idx_for_delta = tf.reshape(scatter_indices[:, 2], (1, lattice_replicas, num_flips))
+        delta_energy = ising_system.compute_delta_energy(ising_system.spin_state, proposed_spin_state, idx_for_delta)
+        new_energy = initial_energy + delta_energy
 
         # Calculate new energy manually from the proposed state
         new_energy_recomputed = ising_system.compute_energy(
@@ -165,7 +172,7 @@ class TestDynamics:
             def compute(self, spin_state: Optional[tf.Variable | tf.Tensor] = None, system: Optional['BaseSpinSystem'] = None) -> tf.Tensor:
                 spin_state, _ = self._resolve(spin_state, system)
                 # Mean per replica
-                return tf.reduce_mean(tf.cast(spin_state, tf.float32), axis=[1, 2])
+                return tf.reduce_mean(tf.cast(spin_state, tf.float32), axis=[2, 3])
 
         tracker = Tracker([Magnetization()])
 
@@ -199,7 +206,7 @@ class TestDynamics:
         class Magnetization(Measurement):
             def compute(self, spin_state: Optional[tf.Variable | tf.Tensor] = None, system: Optional['BaseSpinSystem'] = None) -> tf.Tensor:
                 spin_state, _ = self._resolve(spin_state, system)
-                return tf.reduce_mean(tf.cast(spin_state, tf.float32), axis=[1, 2])
+                return tf.reduce_mean(tf.cast(spin_state, tf.float32), axis=[2, 3])
 
         tracker = Tracker([Magnetization()])
 

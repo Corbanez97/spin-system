@@ -36,6 +36,7 @@ class WegnerSystem(BaseSpinSystem):
             lattice_dim=lattice_dim,
             lattice_length=lattice_length,
             lattice_replicas=lattice_replicas,
+            quenched_replicas=1,
             initial_spin_state=initial_spin_state
         )
         self.interaction_strength = tf.constant(
@@ -45,9 +46,9 @@ class WegnerSystem(BaseSpinSystem):
         """
         Initializes random Z2 links {-1, 1}.
         """
-        # Full Shape: [Replicas, L, ..., L, D]
+        # Full Shape: [Quenched, Replicas, L, ..., L, D]
         # We append lattice_dim to the spatial shape
-        full_shape = [self.lattice_replicas] + self.shape + [self.lattice_dim]
+        full_shape = [self.quenched_replicas, self.lattice_replicas] + self.shape + [self.lattice_dim]
 
         rand = tf.random.uniform(full_shape, dtype=tf.float32)
         spin_state = tf.where(rand > 0.5, 1.0, -1.0)
@@ -65,10 +66,10 @@ class WegnerSystem(BaseSpinSystem):
 
         plaquettes = self.compute_all_plaquettes(spin_state)
 
-        # Sum over all sites (spatial dims 1..D) and all planes (last dim)
-        # Result shape: (Replicas,)
-        # Note: plaquettes tensor has shape (Replicas, L..., L, Num_Planes)
-        spatial_axes = list(range(1, self.lattice_dim + 1))
+        # Sum over all sites (spatial dims 2..D+1) and all planes (last dim)
+        # Result shape: (Q, R)
+        # Note: plaquettes tensor has shape (Q, R, L..., L, Num_Planes)
+        spatial_axes = list(range(2, self.lattice_dim + 2))
         # Sum over spatial dimensions first
         sum_spatial = tf.reduce_sum(plaquettes, axis=spatial_axes)
         # Sum over the planes (mu-nu pairs)
@@ -89,10 +90,10 @@ class WegnerSystem(BaseSpinSystem):
         plaquette_terms = []
 
         for mu, nu in itertools.combinations(range(self.lattice_dim), 2):
-            # The tensor axes for spatial dimensions are shifted by 1 (index 0 is Replicas)
+            # The tensor axes for spatial dimensions are shifted by 2 (index 0 is Q, 1 is R)
             # axis_mu corresponds to the spatial dimension mu
-            axis_mu = mu + 1
-            axis_nu = nu + 1
+            axis_mu = mu + 2
+            axis_nu = nu + 2
 
             # --- Link 1: U_mu(r) ---
             # Standard link at r pointing in mu

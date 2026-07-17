@@ -24,6 +24,7 @@ class SphericalSystem(BaseSpinSystem):
             lattice_dim=lattice_dim,
             lattice_length=lattice_length,
             lattice_replicas=lattice_replicas,
+            quenched_replicas=1,
             initial_spin_state=initial_spin_state
         )
 
@@ -45,7 +46,7 @@ class SphericalSystem(BaseSpinSystem):
         """
         Continuous spins normally distributed.
         """
-        full_shape = [self.lattice_replicas] + self.shape
+        full_shape = [self.quenched_replicas, self.lattice_replicas] + self.shape
         spin_state = tf.random.normal(
             full_shape, mean=self.initial_magnetization, stddev=1.0
         )
@@ -64,11 +65,11 @@ class SphericalSystem(BaseSpinSystem):
         """
         original_shape = tf.shape(spin_state)
         spin_state_flat_replicas = tf.reshape(
-            spin_state, (self.lattice_replicas, -1)
+            spin_state, (self.quenched_replicas, self.lattice_replicas, -1)
         )
 
         normalized_flat = tf.math.l2_normalize(
-            spin_state_flat_replicas, axis=1
+            spin_state_flat_replicas, axis=2
         )
 
         normalized_spins = tf.reshape(normalized_flat, original_shape)
@@ -79,23 +80,27 @@ class SphericalSystem(BaseSpinSystem):
     def compute_energy(self, spin_state: Optional[tf.Variable | tf.Tensor] = None) -> tf.Tensor:
         if spin_state is None:
             spin_state = self.spin_state.value()
-        # Flatten spins: (replicas, N)
+        
+        Q = self.quenched_replicas
+        R = self.lattice_replicas
+        
+        # Flatten spins: (Q, R, N)
         spin_state_flat = tf.reshape(
-            spin_state, (self.lattice_replicas, -1))
+            spin_state, (Q, R, -1))
 
-        # Flatten interaction matrix: (N, N)
+        # Flatten interaction matrix: (Q, N, N)
         interaction_matrix_flat = tf.reshape(
-            self.interaction_matrix, (self.number_spins, self.number_spins)
+            self.interaction_matrix, (Q, self.number_spins, self.number_spins)
         )
 
         # Flatten field
-        external_field_flat = tf.reshape(self.external_field, (1, -1))
+        external_field_flat = tf.reshape(self.external_field, (1, 1, -1))
 
-        h_local = tf.matmul(spin_state_flat, interaction_matrix_flat)
+        h_local = tf.einsum('qrn,qnm->qrm', spin_state_flat, interaction_matrix_flat)
 
-        pairwise = -0.5 * tf.reduce_sum(spin_state_flat * h_local, axis=1)
+        pairwise = -0.5 * tf.reduce_sum(spin_state_flat * h_local, axis=2)
         field_term = -tf.reduce_sum(spin_state_flat *
-                                    external_field_flat, axis=1)
+                                    external_field_flat, axis=2)
 
         return pairwise + field_term
 
@@ -121,41 +126,42 @@ class SphericalSystem(BaseSpinSystem):
             tf.Tensor of shape (replicas,) — the energy difference E_new - E_old.
         """
         N = tf.cast(self.number_spins, tf.int32)
-        num_flips = tf.shape(changed_indices)[1]
+        num_flips = tf.shape(changed_indices)[2]
+        Q = self.quenched_replicas
+        R = self.lattice_replicas
 
-        # Flatten states: (replicas, N)
-        spin_flat = tf.reshape(spin_state, (self.lattice_replicas, -1))
-        updated_flat = tf.reshape(updated_spin_state, (self.lattice_replicas, -1))
+        # Flatten states: (Q, R, N)
+        spin_flat = tf.reshape(spin_state, (Q, R, -1))
+        updated_flat = tf.reshape(updated_spin_state, (Q, R, -1))
 
-        # Δσ at changed sites: (replicas, num_flips)
-        delta_sigma = tf.gather(updated_flat, changed_indices, batch_dims=1) \
-                    - tf.gather(spin_flat, changed_indices, batch_dims=1)
+        # Δσ at changed sites: (Q, R, num_flips)
+        delta_sigma = tf.gather(updated_flat, changed_indices, batch_dims=2) \
+                    - tf.gather(spin_flat, changed_indices, batch_dims=2)
 
-        # Flatten J: (N, N)
-        J_flat = tf.reshape(self.interaction_matrix, (N, N))
+        # Flatten J: (Q, N, N)
+        J_flat = tf.reshape(self.interaction_matrix, (Q, N, N))
 
         # Gather J rows for perturbed sites
-        flat_idx = tf.reshape(changed_indices, [-1])
-        J_rows = tf.gather(J_flat, flat_idx)
-        J_rows = tf.reshape(J_rows, (self.lattice_replicas, num_flips, N))
+        flat_idx = tf.reshape(changed_indices, (Q, R * num_flips))
+        J_rows = tf.gather(J_flat, flat_idx, batch_dims=1)
+        J_rows = tf.reshape(J_rows, (Q, R, num_flips, N))
 
         # Local fields h_j = Σ_i J_ji σ_i
         h_local = tf.reduce_sum(
-            J_rows * spin_flat[:, tf.newaxis, :], axis=-1
-        )  # (replicas, num_flips)
+            J_rows * spin_flat[:, :, tf.newaxis, :], axis=-1
+        )  # (Q, R, num_flips)
 
         # External field at perturbed sites
         field_flat = tf.reshape(self.external_field, [-1])
-        h_ext = tf.gather(field_flat, flat_idx)
-        h_ext = tf.reshape(h_ext, (self.lattice_replicas, num_flips))
+        h_ext = tf.gather(field_flat, changed_indices)
 
         # Term 1: -Σ_j Δσ_j (h_j + h^ext_j)
         term1 = -tf.reduce_sum(delta_sigma * (h_local + h_ext), axis=-1)
 
         # Term 2: -½ Σ_{i,j∈D} J_ij Δσ_i Δσ_j
-        J_sub = tf.gather(J_rows, changed_indices, batch_dims=1, axis=2)
+        J_sub = tf.gather(J_rows, changed_indices, batch_dims=2, axis=3)
         term2 = -0.5 * tf.reduce_sum(
-            delta_sigma[:, :, tf.newaxis] * J_sub * delta_sigma[:, tf.newaxis, :],
+            delta_sigma[:, :, :, tf.newaxis] * J_sub * delta_sigma[:, :, tf.newaxis, :],
             axis=[-2, -1]
         )
 

@@ -32,6 +32,7 @@ class TravelingSalesmanSystem(BaseSpinSystem):
             lattice_dim=2,
             lattice_length=L,
             lattice_replicas=lattice_replicas,
+            quenched_replicas=1,
             initial_spin_state=initial_spin_state
         )
 
@@ -58,10 +59,10 @@ class TravelingSalesmanSystem(BaseSpinSystem):
         3. All other values are -1.0.
         """
         noise = tf.random.uniform(
-            (self.lattice_replicas, self.lattice_length),
+            (self.quenched_replicas, self.lattice_replicas, self.lattice_length),
             dtype=tf.float32
         )
-        random_permutation_indices = tf.argsort(noise, axis=1)
+        random_permutation_indices = tf.argsort(noise, axis=2)
 
         spin_state = tf.one_hot(
             random_permutation_indices,
@@ -91,22 +92,22 @@ class TravelingSalesmanSystem(BaseSpinSystem):
 
         spin_state = tf.divide(tf.add(spin_state, 1.0), 2.0)
 
-        row_sums = tf.reduce_sum(spin_state, axis=2)
+        row_sums = tf.reduce_sum(spin_state, axis=3)
 
-        col_sums = tf.reduce_sum(spin_state, axis=1)
+        col_sums = tf.reduce_sum(spin_state, axis=2)
 
-        row_penalty = tf.reduce_sum(tf.square(1.0 - row_sums), axis=1)
-        col_penalty = tf.reduce_sum(tf.square(1.0 - col_sums), axis=1)
+        row_penalty = tf.reduce_sum(tf.square(1.0 - row_sums), axis=2)
+        col_penalty = tf.reduce_sum(tf.square(1.0 - col_sums), axis=2)
 
         term_A = self.A * (row_penalty + col_penalty)
 
-        spin_state_next = tf.roll(spin_state, shift=-1, axis=2)
+        spin_state_next = tf.roll(spin_state, shift=-1, axis=3)
 
         step_correlation = tf.matmul(
             spin_state, spin_state_next, transpose_b=True)
 
         dist_cost = tf.reduce_sum(
-            step_correlation * self.cost_matrix, axis=[1, 2])
+            step_correlation * self.cost_matrix, axis=[2, 3])
 
         term_B = self.B * dist_cost
 

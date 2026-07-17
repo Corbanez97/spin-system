@@ -27,7 +27,7 @@ class TestModels:
         )
 
         # Check shape
-        assert system.spin_state.shape == (replicas, L, L)
+        assert system.spin_state.shape == (1, replicas, L, L)
         # Check values are -1 or 1
         unique_vals = np.unique(system.spin_state.value().numpy())
         assert np.all(np.isin(unique_vals, [-1.0, 1.0]))
@@ -45,7 +45,7 @@ class TestModels:
         )
 
         energy = system.compute_energy()
-        assert energy.shape == (replicas,)
+        assert energy.shape == (1, replicas)
 
     def test_spherical_initialization(self):
         L = 10
@@ -61,11 +61,11 @@ class TestModels:
         )
 
         # Check shape
-        assert system.spin_state.shape == (replicas, L, L)
+        assert system.spin_state.shape == (1, replicas, L, L)
 
         # Check constraint: sum(x^2) = N
-        spin_flat = tf.reshape(system.spin_state, (replicas, -1))
-        norm_sq = tf.reduce_sum(spin_flat**2, axis=1)
+        spin_flat = tf.reshape(system.spin_state, (system.quenched_replicas, replicas, -1))
+        norm_sq = tf.reduce_sum(spin_flat**2, axis=2)
         expected_norm = float(L*L)
 
         assert np.allclose(norm_sq.numpy(), expected_norm, atol=1e-4)
@@ -76,10 +76,10 @@ class TestModels:
             lattice_dim=2, lattice_length=4, lattice_replicas=2)
 
         state = system.spin_state
-        assert state.shape == (2, 4, 4, 2)  # R, L, L, D
+        assert state.shape == (1, 2, 4, 4, 2)  # Q, R, L, L, D
         
         energy = system.compute_energy()
-        assert energy.shape == (2,)
+        assert energy.shape == (1, 2)
 
     @pytest.mark.parametrize("dim", [1, 2, 3])
     def test_spherical_constraint_nd(self, dim):
@@ -110,15 +110,15 @@ class TestModels:
         )
 
         # Check shape
-        expected_shape = (replicas,) + shape
+        expected_shape = (1, replicas,) + shape
         assert system.spin_state.shape == expected_shape
 
         # Verify constraint
-        # Flatten everything except replicas: (replicas, N)
-        spin_flat = tf.reshape(system.spin_state, (replicas, -1))
+        # Flatten everything except replicas: (Q, R, N)
+        spin_flat = tf.reshape(system.spin_state, (1, replicas, -1))
 
         # Calculate sum of squares
-        norm_sq = tf.reduce_sum(spin_flat**2, axis=1)
+        norm_sq = tf.reduce_sum(spin_flat**2, axis=2)
 
         # Expected is N
         expected_norm = float(N)

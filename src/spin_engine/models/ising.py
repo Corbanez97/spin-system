@@ -25,6 +25,7 @@ class IsingSystem(BaseSpinSystem):
             lattice_dim=lattice_dim,
             lattice_length=lattice_length,
             lattice_replicas=lattice_replicas,
+            quenched_replicas=1,
             initial_spin_state=initial_spin_state
         )
 
@@ -49,7 +50,7 @@ class IsingSystem(BaseSpinSystem):
         p_up = 0.5 + 0.5 * tf.tanh(self.initial_magnetization)
 
         # Generate random values for all replicas
-        full_shape = [self.lattice_replicas] + self.shape
+        full_shape = [self.quenched_replicas, self.lattice_replicas] + self.shape
         rand_vals = tf.random.uniform(full_shape, dtype=tf.float32)
 
         spin_state = tf.cast(rand_vals < p_up, tf.float32)
@@ -62,24 +63,27 @@ class IsingSystem(BaseSpinSystem):
         if spin_state is None:
             spin_state = self.spin_state
 
-        # Flatten spins: (replicas, N)
-        spin_state_flat = tf.reshape(spin_state, (self.lattice_replicas, -1))
+        Q = self.quenched_replicas
+        R = self.lattice_replicas
 
-        # Flatten interaction matrix: (N, N)
+        # Flatten spins: (Q, R, N)
+        spin_state_flat = tf.reshape(spin_state, (Q, R, -1))
+
+        # Flatten interaction matrix: (Q, N, N)
         interaction_matrix_flat = tf.reshape(
-            self.interaction_matrix, (self.number_spins, self.number_spins)
+            self.interaction_matrix, (Q, self.number_spins, self.number_spins)
         )
 
-        # Flatten field: (1, N) -> elementwise multiply broadcasts over replicas
-        external_field_flat = tf.reshape(self.external_field, (1, -1))
+        # Flatten field: (1, 1, N) -> elementwise multiply broadcasts over Q and R
+        external_field_flat = tf.reshape(self.external_field, (1, 1, -1))
 
         # E = -0.5 * S^T J S - h S
-        # Compute h_local = S @ J  --> shape (replicas, N)
-        h_local = tf.matmul(spin_state_flat, interaction_matrix_flat)
+        # Compute h_local = S @ J  --> shape (Q, R, N)
+        h_local = tf.einsum('qrn,qnm->qrm', spin_state_flat, interaction_matrix_flat)
 
-        pairwise = -0.5 * tf.reduce_sum(spin_state_flat * h_local, axis=1)
+        pairwise = -0.5 * tf.reduce_sum(spin_state_flat * h_local, axis=2)
         field_term = -tf.reduce_sum(spin_state_flat *
-                                    external_field_flat, axis=1)
+                                    external_field_flat, axis=2)
 
         return pairwise + field_term
 
@@ -110,47 +114,44 @@ class IsingSystem(BaseSpinSystem):
             tf.Tensor of shape (replicas,) — the energy difference E_new - E_old.
         """
         N = tf.cast(self.number_spins, tf.int32)
-        num_flips = tf.shape(changed_indices)[1]
+        num_flips = tf.shape(changed_indices)[2]
+        Q = self.quenched_replicas
+        R = self.lattice_replicas
 
-        # Flatten spins: (replicas, N)
-        spin_flat = tf.reshape(spin_state, (self.lattice_replicas, -1))
+        # Flatten spins: (Q, R, N)
+        spin_flat = tf.reshape(spin_state, (Q, R, -1))
 
-        # Flatten J: (N, N)
-        J_flat = tf.reshape(self.interaction_matrix, (N, N))
+        # Flatten J: (Q, N, N)
+        J_flat = tf.reshape(self.interaction_matrix, (Q, N, N))
 
-        # Gather J rows for all flipped sites across all replicas
-        # Indices may differ per replica, so we flatten and reshape
-        flat_idx = tf.reshape(changed_indices, [-1])              # (replicas * num_flips,)
-        J_rows = tf.gather(J_flat, flat_idx)                      # (replicas * num_flips, N)
-        J_rows = tf.reshape(J_rows, (self.lattice_replicas, num_flips, N))
+        # Gather J rows for all flipped sites across Q and R
+        flat_idx = tf.reshape(changed_indices, (Q, R * num_flips)) # (Q, R * num_flips)
+        J_rows = tf.gather(J_flat, flat_idx, batch_dims=1)         # (Q, R * num_flips, N)
+        J_rows = tf.reshape(J_rows, (Q, R, num_flips, N))
 
         # Local fields h_n = Σ_j J_{nj} σ_j for each flipped site
-        # spin_flat: (replicas, N) → (replicas, 1, N) for broadcasting
+        # spin_flat: (Q, R, N) → (Q, R, 1, N) for broadcasting
         h_local = tf.reduce_sum(
-            J_rows * spin_flat[:, tf.newaxis, :], axis=-1
-        )  # (replicas, num_flips)
+            J_rows * spin_flat[:, :, tf.newaxis, :], axis=-1
+        )  # (Q, R, num_flips)
 
-        # Spin values at flipped sites: (replicas, num_flips)
-        s_flipped = tf.gather(spin_flat, changed_indices, batch_dims=1)
+        # Spin values at flipped sites: (Q, R, num_flips)
+        s_flipped = tf.gather(spin_flat, changed_indices, batch_dims=2)
 
         # External field at flipped sites
         field_flat = tf.reshape(self.external_field, [-1])        # (N,)
-        h_ext_flipped = tf.gather(field_flat, flat_idx)           # (replicas * num_flips,)
-        h_ext_flipped = tf.reshape(h_ext_flipped, (self.lattice_replicas, num_flips))
+        h_ext_flipped = tf.gather(field_flat, changed_indices)    # (Q, R, num_flips)
 
         # Term 1: Σ_k 2 * σ_{n_k} * (h_{n_k} + h^ext_{n_k})
         term1 = tf.reduce_sum(
             2.0 * s_flipped * (h_local + h_ext_flipped), axis=-1
-        )  # (replicas,)
+        )  # (Q, R)
 
         # Term 2: Cross-term for multi-site flips
-        # -½ Σ_{i,j∈D} J_ij Δσ_i Δσ_j where Δσ = -2σ
-        # = -½ Σ_{i,j∈D} J_ij (-2σ_i)(-2σ_j) = -2 Σ_{i,j∈D} J_ij σ_i σ_j
-        # For single flips J_nn=0, so this vanishes automatically.
-        J_sub = tf.gather(J_rows, changed_indices, batch_dims=1, axis=2)  # (replicas, num_flips, num_flips)
+        J_sub = tf.gather(J_rows, changed_indices, batch_dims=2, axis=3)  # (Q, R, num_flips, num_flips)
         term2 = -2.0 * tf.reduce_sum(
-            s_flipped[:, :, tf.newaxis] * J_sub * s_flipped[:, tf.newaxis, :],
+            s_flipped[:, :, :, tf.newaxis] * J_sub * s_flipped[:, :, tf.newaxis, :],
             axis=[-2, -1]
-        )  # (replicas,)
+        )  # (Q, R)
 
         return term1 + term2

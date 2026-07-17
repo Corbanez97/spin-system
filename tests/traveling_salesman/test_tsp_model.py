@@ -35,17 +35,17 @@ class TestTSPModel:
         """
         spin_state = tsp_system.initialize_state()
 
-        assert spin_state.shape == (2, 3, 3)
+        assert spin_state.shape == (1, 2, 3, 3)
 
         tf.debugging.assert_near(
             tf.abs(spin_state), tf.ones_like(spin_state), atol=1e-5)
 
         binary_state = (spin_state + 1.0) / 2.0
 
-        row_sums = tf.reduce_sum(binary_state, axis=2)
+        row_sums = tf.reduce_sum(binary_state, axis=3)
         tf.debugging.assert_near(row_sums, tf.ones_like(row_sums), atol=1e-5)
 
-        col_sums = tf.reduce_sum(binary_state, axis=1)
+        col_sums = tf.reduce_sum(binary_state, axis=2)
         tf.debugging.assert_near(col_sums, tf.ones_like(col_sums), atol=1e-5)
 
     def test_matrix_compatibility(self):
@@ -64,4 +64,4 @@ class TestTSPModel:
         assert system.lattice_length == L
 
         state = system.initialize_state()
-        assert state.shape == (5, L, L)
+        assert state.shape == (1, 5, L, L)
