@@ -58,7 +58,6 @@ class EdwardsAndersonSystem(BaseSpinSystem):
         """
         p_up = 0.5 + 0.5 * tf.tanh(self.initial_magnetization)
 
-        # Generate random values for all replicas
         full_shape = [self.quenched_replicas, self.lattice_replicas] + self.shape
         rand_vals = tf.random.uniform(full_shape, dtype=tf.float32)
 

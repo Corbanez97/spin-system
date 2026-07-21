@@ -24,12 +24,12 @@ def plot_wegner_system(system):
         ax: matplotlib.axes.Axes
     """
     spin_state = system.spin_state
-    _, ny, nx, _ = spin_state.shape
+    _, _, ny, nx, _ = spin_state.shape
 
     plaquettes = system.compute_all_plaquettes(spin_state)
-    plaquettes_2d = plaquettes[0, ..., 0].numpy()
+    plaquettes_2d = plaquettes[0, 0, ..., 0].numpy()
 
-    spin_vis = spin_state[0].numpy()
+    spin_vis = spin_state[0, 0].numpy()
 
     x_pts = []
     y_pts = []
@@ -162,10 +162,10 @@ def update(frame_idx):
 
     # Inline logic for speed/simplicity in this context:
     spin_state = system.spin_state
-    _, ny, nx, _ = spin_state.shape
+    _, _, ny, nx, _ = spin_state.shape
     plaquettes = system.compute_all_plaquettes(spin_state)
-    plaquettes_2d = plaquettes[0, ..., 0].numpy()
-    spin_vis = spin_state[0].numpy()
+    plaquettes_2d = plaquettes[0, 0, ..., 0].numpy()
+    spin_vis = spin_state[0, 0].numpy()
 
     x_pts = []
     y_pts = []

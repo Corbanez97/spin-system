@@ -108,12 +108,12 @@ class GaussianInteraction(Interaction):
         self.seed = seed
         self.nearest_neighbor_only = nearest_neighbor_only
 
-    def generate(self, D: int, L: int, quenched: int) -> np.ndarray:
+    def generate(self, D: int, L: int, quenched: int = 1) -> np.ndarray:
         if self.seed is not None:
             np.random.seed(self.seed)
 
         N = L**D
-        J_flat = np.random.normal(self.mean, self.std, size=(quenched, N, N))
+        J_flat = np.random.normal(self.mean, self.std, size=(quenched, N, N)).astype(np.float32)
 
         J_flat = 0.5 * (J_flat + J_flat.transpose(0, 2, 1))
 
@@ -145,12 +145,12 @@ class BinaryRandomInteraction(Interaction):
         self.seed = seed
         self.nearest_neighbor_only = nearest_neighbor_only
 
-    def generate(self, D: int, L: int, quenched: int) -> np.ndarray:
+    def generate(self, D: int, L: int, quenched: int = 1) -> np.ndarray:
         if self.seed is not None:
             np.random.seed(self.seed)
 
         N = L**D
-        J_flat = np.random.choice([-self.J, self.J], size=(quenched, N, N))
+        J_flat = np.random.choice([-self.J, self.J], size=(quenched, N, N)).astype(np.float32)
 
         upper = np.triu(J_flat, 1)
         J_flat = upper + upper.transpose(0, 2, 1)
@@ -163,3 +163,4 @@ class BinaryRandomInteraction(Interaction):
             J_tensor = J_tensor * nn_mask[np.newaxis, ...]
 
         return J_tensor
+

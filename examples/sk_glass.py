@@ -97,8 +97,8 @@ def _equilibrium_q2(results: dict, betas: list[float]):
     for beta in betas:
         pq = results[beta]["OverlapDistribution"]
         half = len(pq) // 2
-        q_flat = pq[half:]                # (steps, n_pairs)
-        q2_per_step = np.mean(q_flat ** 2, axis=1)
+        q_flat = pq[half:]                # (steps, 1, n_pairs)
+        q2_per_step = np.mean(q_flat ** 2, axis=2)
         q2_means.append(np.mean(q2_per_step))
         q2_stds.append(np.std(q2_per_step))
     return np.array(q2_means), np.array(q2_stds)
@@ -129,9 +129,9 @@ def plot_sk_results(
         last_beta = betas[-1]
         mag = results[last_beta]["Magnetization"]
         steps = np.arange(mag.shape[0]) * 100
-        for r in range(min(10, mag.shape[1])):
-            ax_mag.plot(steps, mag[:, r], alpha=0.3, linewidth=0.8)
-        ax_mag.plot(steps, np.mean(mag, axis=1), "k--", lw=2, label="Mean")
+        for r in range(min(10, mag.shape[2])):
+            ax_mag.plot(steps, mag[:, 0, r], alpha=0.3, linewidth=0.8)
+        ax_mag.plot(steps, np.mean(mag, axis=(1, 2)), "k--", lw=2, label="Mean")
         ax_mag.set_title(f"D={D}  Magnetization (β={last_beta})")
         ax_mag.set_xlabel("MC step")
         ax_mag.set_ylabel("m")

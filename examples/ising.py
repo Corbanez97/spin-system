@@ -34,7 +34,7 @@ def run_simulation():
     # REMOVING L=64 will take our simulation from 12.6 hours to 3.8 hours
     L_list = [4, 6, 8, 10, 16, 24, 32]#, 64]
     lattice_replicas = 64
-    betas = generate_betas(25)
+    betas = generate_betas(15)
     
     granularity = 100
     
@@ -57,7 +57,7 @@ def run_simulation():
         interaction_matrix = PeriodicNearestNeighborInteraction().generate(2, L)
         
         # Define sweep length dynamically based on system size L to ensure proper equilibration
-        sweeps = 2000
+        sweeps = 100
         sweep_length = sweeps * N
             
         burn_in_steps = int((sweep_length / granularity) * 0.2)

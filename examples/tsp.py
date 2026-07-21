@@ -69,7 +69,9 @@ for b in betas:
     annealing_history.append(tracker.history['Energy'].numpy())
     print(f"Finished sweep for beta={b:.2f}")
 
-full_energy_history = np.concatenate(annealing_history, axis=0)
+    # annealing_history has list of arrays of shape (steps, Q, R)
+    # We want shape (total_steps, R)
+    full_energy_history = np.concatenate(annealing_history, axis=0)[:, 0, :]
 
 
 def create_integrated_dashboard_tsp(G, system, all_active_nodes, W, energy_history):
@@ -82,7 +84,7 @@ def create_integrated_dashboard_tsp(G, system, all_active_nodes, W, energy_histo
 
     PENALTY_THRESHOLD = 90.0
 
-    replicas_spins = system.spin_state.value().numpy()
+    replicas_spins = system.spin_state.value().numpy()[0]
     total_steps = energy_history.shape[0]
 
     # OPTIMIZATION: Downsample energy history for plotting (max ~1000 points)

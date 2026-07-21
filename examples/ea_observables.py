@@ -162,8 +162,8 @@ def run_simulation(is_test: bool = False, force_run: bool = False):
             )
             
             # Extract data and discard burn-in
-            E_hist = tracker.history['Energy'].numpy()[burn_in_steps:, :] # shape: (steps, replicas)
-            pq_hist = tracker.history['OverlapDistribution'].numpy()[burn_in_steps:, :] # shape: (steps, num_pairs)
+            E_hist = tracker.history['Energy'].numpy()[burn_in_steps:, 0, :] # shape: (steps, replicas)
+            pq_hist = tracker.history['OverlapDistribution'].numpy()[burn_in_steps:, 0, :] # shape: (steps, num_pairs)
             
             # Normalize energy per spin
             e_hist = E_hist / N

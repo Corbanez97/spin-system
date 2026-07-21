@@ -280,7 +280,7 @@ def benchmark_overlap_scaling(replicas_grid: List[int], n_spins: int = 64, repea
     for R in replicas_grid:
         if _GPUS:
             tf.config.experimental.reset_memory_stats('GPU:0')
-        state = tf.sign(tf.random.uniform((R, n_spins), minval=-1.0, maxval=1.0))
+        state = tf.sign(tf.random.uniform((1, R, n_spins), minval=-1.0, maxval=1.0))
 
         out = measurement.compute(spin_state=state)
         _sync()
@@ -336,7 +336,7 @@ def make_ising(R: int):
 def make_ea(R: int):
     L = 4
     nn = PeriodicNearestNeighborInteraction().generate(3, L)
-    rnd = BinaryRandomInteraction(J=1.0, seed=42).generate(3, L)
+    rnd = BinaryRandomInteraction(J=1.0, seed=42).generate(3, L, quenched=1)
     J = nn * rnd
     return EdwardsAndersonSystem(lattice_length=L, lattice_dim=3, lattice_replicas=R,
                                   interaction_matrix=J, initial_magnetization=0.0)
@@ -565,7 +565,7 @@ def main():
         N = L ** 3
         sweep_length = SWEEPS * N
         nn_mask = PeriodicNearestNeighborInteraction().generate(3, L)
-        random_J = BinaryRandomInteraction(J=1.0, seed=42).generate(3, L)
+        random_J = BinaryRandomInteraction(J=1.0, seed=42).generate(3, L, quenched=1)
         interaction_matrix = nn_mask * random_J
         system = EdwardsAndersonSystem(
             lattice_length=L, lattice_dim=3, lattice_replicas=replicas,
@@ -655,7 +655,7 @@ def main():
     L, N = 4, 64
     sweep_length = SWEEPS * N
     nn_mask = PeriodicNearestNeighborInteraction().generate(3, L)
-    random_J = BinaryRandomInteraction(J=1.0, seed=42).generate(3, L)
+    random_J = BinaryRandomInteraction(J=1.0, seed=42).generate(3, L, quenched=1)
     interaction_matrix = nn_mask * random_J
 
     measurement_overhead = []

@@ -50,7 +50,7 @@ class SherringtonKirkpatrickSystem(IsingSystem):
         std = (self.J / np.sqrt(num_spins)) * np.sqrt(2)
         
         # Generate the fully connected interaction matrix shaped for L and D
-        interaction = GaussianInteraction(mean=0.0, std=std, seed=seed)
+        interaction = GaussianInteraction(mean=0.0, std=std, seed=seed, nearest_neighbor_only=False)
         interaction_matrix = interaction.generate(D=lattice_dim, L=lattice_length, quenched=1)[0]
 
         # Call the parent IsingSystem
